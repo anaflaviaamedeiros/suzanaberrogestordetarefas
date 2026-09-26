@@ -331,7 +331,7 @@ async function apiCall(action, params, method, _isRetry){
   }
 }
 const apiLogin = (usuario, senha)=> apiCall('login', {usuario, senha}, 'POST');
-const apiGetData = ()=> apiCall('getData', {token: session.token}, 'GET');
+const apiGetData = ()=> apiCall('getData', {token: session.token}, 'POST'); // tudo por POST: nesta publicação, respostas de GET voltam 404
 const apiSaveData = (obj)=> apiCall('saveData', {token: session.token, payload: JSON.stringify(obj)}, 'POST');
 const apiChangePassword = (senhaAtual, novaSenha)=> apiCall('changePassword', {token: session.token, senhaAtual, novaSenha}, 'POST');
 

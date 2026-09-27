@@ -143,7 +143,13 @@
   .badge.none, .badge.done{background:var(--paper-dim);color:var(--muted);}
 
   /* Instituições */
-  .inst-body{display:grid;grid-template-columns:1fr 1fr;}
+  .inst-body{display:grid;grid-template-columns:repeat(3,1fr);}
+  .form-cols{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:start;}
+  .form-col{background:var(--white);border:1px solid var(--line-soft);border-radius:var(--radius);padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0;}
+  .form-col h3{font-family:var(--font-display);font-size:15px;font-weight:600;margin:0 0 2px;padding-bottom:8px;border-bottom:1px solid var(--line-soft);}
+  .form-col .addr-title{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;margin:4px 0 -4px;}
+  .field-row.r-3-1{grid-template-columns:3fr 1fr;}
+  .field-row.r-1-2{grid-template-columns:1fr 2fr;}
   .kv-col{padding:12px 16px;}
   .kv-col + .kv-col{border-left:1px solid var(--line-soft);}
   .kv-col h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);}
@@ -198,12 +204,17 @@
   .empty-state .big{font-family:var(--font-display);font-size:20px;color:var(--ink);margin-bottom:6px;}
   .note{background:var(--warn-soft);border-radius:8px;padding:9px 12px;font-size:12.5px;color:#6d5320;margin-bottom:14px;}
 
+  @media (max-width:1100px){
+    .inst-body{grid-template-columns:1fr;}
+    .kv-col + .kv-col{border-left:none;border-top:1px solid var(--line-soft);}
+    .form-cols{grid-template-columns:1fr;}
+  }
   @media (max-width:860px){
     #app{padding:0 16px 12px;}
     .board{grid-template-columns:1fr;}
     header.top{padding:20px 0 14px;}
     header.top h1{font-size:21px;}
-    .field-row, .check-grid{grid-template-columns:1fr;}
+    .field-row, .field-row.r-3-1, .field-row.r-1-2, .check-grid{grid-template-columns:1fr;}
     .inst-body{grid-template-columns:1fr;}
     .kv-col + .kv-col{border-left:none;border-top:1px solid var(--line-soft);}
     .fab{bottom:16px;right:16px;}
@@ -425,12 +436,30 @@ function openChangePasswordModal(){
 }
 
 /* ================== CARREGAR / SALVAR ================== */
+const END_KEYS = ['cep','logradouro','numero','complemento','bairro','cidade','uf'];
+function normalizeEnd(e, legado){
+  if(!e || typeof e !== 'object') e = {};
+  END_KEYS.forEach(k=>{ if(typeof e[k] !== 'string') e[k] = ''; });
+  // endereço antigo (texto único) vai para o logradouro, para não perder nada
+  if(legado && END_KEYS.every(k=>!e[k])) e.logradouro = legado;
+  return e;
+}
+function normalizePessoa(o, keys, legadoEnd){
+  if(!o || typeof o !== 'object') o = {};
+  keys.forEach(k=>{ if(typeof o[k] !== 'string') o[k] = ''; });
+  o.end = normalizeEnd(o.end, legadoEnd);
+  return o;
+}
+const REP_KEYS = ['nome','cpf','rg','profissao','email','telefone'];
+const CONT_KEYS = ['nome','cpf','rg','profissao','crcUf','crcNumero','email','telefone'];
 function normalizeInst(i, idx){
   i.nome = i.nome || 'Instituição';
   if(!i.cor) i.cor = PALETTE[idx % PALETTE.length];
-  ['cnpj','endereco','telefone','dataInscricao'].forEach(k=>{ if(typeof i[k] !== 'string') i[k] = ''; });
-  if(!i.rep || typeof i.rep !== 'object') i.rep = {};
-  ['nome','cpf','email','telefone'].forEach(k=>{ if(typeof i.rep[k] !== 'string') i.rep[k] = ''; });
+  ['cnpj','email','endereco','telefone','dataInscricao'].forEach(k=>{ if(typeof i[k] !== 'string') i[k] = ''; });
+  i.end = normalizeEnd(i.end, i.endereco);
+  i.endereco = formatEnd(i.end);
+  i.rep = normalizePessoa(i.rep, REP_KEYS);
+  i.contador = normalizePessoa(i.contador, CONT_KEYS);
   if(typeof i.excluirIndicadores === 'undefined') i.excluirIndicadores = false;
   if(!Array.isArray(i.projetos)) i.projetos = [];
   i.projetos.forEach(normalizeProj);
@@ -555,6 +584,29 @@ function normalizeStr(s){ return String(s||'').normalize('NFD').replace(/[\u0300
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 const escapeAttr = escapeHtml;
 function isUrl(u){ return /^https?:\/\//i.test(u); }
+// Transforma URLs (http://, https://, www.) em links clicáveis. Todo o resto é escapado —
+// nenhum HTML digitado no comentário é executado, e só são gerados links http/https.
+function linkifyText(text){
+  const src = String(text==null?'':text);
+  const re = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+  let out = '', last = 0, m;
+  while((m = re.exec(src))){
+    let url = m[0];
+    const trail = url.match(/[.,;:!?)\]}]+$/); // pontuação no fim da frase não faz parte do link
+    if(trail) url = url.slice(0, url.length - trail[0].length);
+    if(!url || /^www\.$/i.test(url)) continue;
+    const href = /^www\./i.test(url) ? 'https://' + url : url;
+    let ok = false;
+    try{ const u = new URL(href); ok = (u.protocol==='http:' || u.protocol==='https:') && !!u.hostname; }catch(e){}
+    out += escapeHtml(src.slice(last, m.index));
+    out += ok
+      ? `<a href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer nofollow" style="color:var(--teal);text-decoration:underline;word-break:break-all;">${escapeHtml(url)}</a>`
+      : escapeHtml(url);
+    last = m.index + url.length;
+    re.lastIndex = last;
+  }
+  return out + escapeHtml(src.slice(last));
+}
 function toast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -1042,7 +1094,7 @@ function openTaskModal(taskId){
         return `<div style="background:var(--paper-dim);border-radius:8px;padding:7px 10px;display:flex;gap:8px;align-items:flex-start;">
           <span class="avatar" style="background:${autor?membroColor(autor):'var(--ink)'};color:#2b2f38;">${initials(msg.autorNome||'—')}</span>
           <div><div style="font-size:11.5px;font-weight:700;">${escapeHtml(msg.autorNome||'—')} <span style="font-weight:400;color:var(--muted);">· ${fmtDateTime(msg.criadoEm)}</span></div>
-          <div style="font-size:13px;margin-top:2px;white-space:pre-wrap;">${escapeHtml(msg.texto)}</div></div></div>`;
+          <div style="font-size:13px;margin-top:2px;white-space:pre-wrap;word-break:break-word;">${linkifyText(msg.texto)}</div></div></div>`;
       }).join('');
       chatList.scrollTop = chatList.scrollHeight;
     }
@@ -1122,20 +1174,38 @@ function openTaskModal(taskId){
   };
 }
 
-function openQuickTipoModal(onAdded){
-  const overlay = makeModal('Novo tipo de tarefa', `
-    <div class="field"><label>Nome do tipo</label><input id="qt_nome" placeholder="Ex.: Recibo"></div>
+// Cadastro rápido de uma nova opção numa lista (Tipo de tarefa, Origem do projeto...).
+// Ignora duplicados que só diferem em maiúsculas/minúsculas ou espaços: nesse caso usa a opção já existente.
+function openQuickOptionModal(cfg){
+  const overlay = makeModal(cfg.titulo, `
+    <div class="field"><label>${cfg.label}</label><input id="qt_nome" placeholder="${escapeAttr(cfg.placeholder||'')}"></div>
+    <div id="qt_msg" class="hint" style="margin:-6px 0 0;display:none;"></div>
     <div class="modal-actions" style="justify-content:flex-end;"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="qt_save">Adicionar</button></div>`, 340);
   overlay.style.zIndex = '300';
   const inp = overlay.querySelector('#qt_nome');
   inp.focus();
   const save = ()=>{
-    const nome = inp.value.trim(); if(!nome) return;
-    if(!state.tiposTarefa.includes(nome)){ state.tiposTarefa.push(nome); scheduleSave(); }
-    overlay.remove(); onAdded(nome); toast('Tipo adicionado.');
+    const nome = inp.value.trim().replace(/\s+/g,' ');
+    if(!nome) return;
+    const lista = cfg.lista();
+    const existente = lista.find(x=>normalizeStr(x)===normalizeStr(nome));
+    if(existente){
+      overlay.remove(); cfg.onAdded(existente); toast(`"${existente}" já existe — selecionada.`);
+      return;
+    }
+    lista.push(nome); scheduleSave();
+    overlay.remove(); cfg.onAdded(nome); toast(cfg.okMsg);
   };
   overlay.querySelector('#qt_save').onclick = save;
   inp.onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); } };
+}
+function openQuickTipoModal(onAdded){
+  openQuickOptionModal({titulo:'Novo tipo de tarefa', label:'Nome do tipo', placeholder:'Ex.: Recibo',
+    lista:()=>state.tiposTarefa, onAdded, okMsg:'Tipo adicionado.'});
+}
+function openQuickOrigemModal(onAdded){
+  openQuickOptionModal({titulo:'Nova origem de projeto', label:'Nome da origem', placeholder:'Ex.: Emenda parlamentar',
+    lista:()=>state.origensProjeto, onAdded, okMsg:'Origem adicionada.'});
 }
 
 function maybeGenerateNextRecurrence(t, prevStatus, newStatus){
@@ -1297,8 +1367,10 @@ function openProjModal(instId, projId){
     <div class="field-row">
       <div class="field"><label>Número / código</label><input id="p_codigo" value="${escapeAttr(p.codigo)}" placeholder="Ex.: 123/2026"></div>
       <div class="field"><label>Origem do projeto</label>
-        <select id="p_origem"><option value="">—</option>${state.origensProjeto.map(o=>`<option ${p.origem===o?'selected':''}>${escapeHtml(o)}</option>`).join('')}
-        ${p.origem && !state.origensProjeto.includes(p.origem) ? `<option selected>${escapeHtml(p.origem)}</option>` : ''}</select></div>
+        <div style="display:flex;gap:6px;">
+          <select id="p_origem" style="flex:1;min-width:0;"></select>
+          <button type="button" class="btn ghost small" id="p_origem_add" title="Cadastrar nova origem" style="flex:none;padding:0 12px;">+</button>
+        </div></div>
     </div>
     <div class="field-row">
       <div class="field"><label>Início da vigência</label><input id="p_inicio" type="date" value="${p.inicio}"></div>
@@ -1324,6 +1396,15 @@ function openProjModal(instId, projId){
       <div>${!isNew?`<button class="btn danger small" id="p_del">Excluir</button>`:''}</div>
       <div style="display:flex;gap:8px;"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="p_save">${isNew?'Cadastrar projeto':'Salvar'}</button></div>
     </div>`);
+
+  const origemSel = overlay.querySelector('#p_origem');
+  const fillOrigem = sel=>{
+    const opts = [...state.origensProjeto];
+    if(sel && !opts.includes(sel)) opts.push(sel); // preserva origem antiga que não está mais na lista
+    origemSel.innerHTML = `<option value="">—</option>` + opts.map(o=>`<option ${o===sel?'selected':''}>${escapeHtml(o)}</option>`).join('');
+  };
+  fillOrigem(p.origem);
+  overlay.querySelector('#p_origem_add').onclick = ()=>openQuickOrigemModal(nome=>fillOrigem(nome));
 
   const stSel = overlay.querySelector('#p_status'), desde = overlay.querySelector('#p_desde');
   const altWrap = overlay.querySelector('#p_alt_wrap'), hint = overlay.querySelector('#p_status_hint');
@@ -1390,32 +1471,93 @@ function openProjModal(instId, projId){
 }
 
 /* ================== INSTITUIÇÕES ================== */
+const UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
+
+// ---- máscaras ----
+const onlyDigits = s=>String(s||'').replace(/\D/g,'');
+function maskCPF(v){
+  const d = onlyDigits(v).slice(0,11);
+  return d.replace(/^(\d{3})(\d)/,'$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/,'$1.$2.$3').replace(/\.(\d{3})(\d{1,2})$/,'.$1-$2');
+}
+function maskCNPJ(v){
+  const d = onlyDigits(v).slice(0,14);
+  return d.replace(/^(\d{2})(\d)/,'$1.$2').replace(/^(\d{2})\.(\d{3})(\d)/,'$1.$2.$3')
+          .replace(/\.(\d{3})(\d)/,'.$1/$2').replace(/(\d{4})(\d{1,2})$/,'$1-$2');
+}
+function maskPhone(v){
+  const d = onlyDigits(v).slice(0,11);
+  if(d.length <= 2) return d.length ? '(' + d : '';
+  if(d.length <= 6) return `(${d.slice(0,2)}) ${d.slice(2)}`;
+  if(d.length <= 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+  return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+}
+function maskCEP(v){ const d = onlyDigits(v).slice(0,8); return d.length > 5 ? d.slice(0,5) + '-' + d.slice(5) : d; }
+// RG varia por estado: aplica o formato padrão (00.000.000-0) só quando tem 8 ou 9 caracteres;
+// fora disso mantém o que foi digitado (letras, números e dígito X).
+function maskRG(v){
+  const raw = String(v||'').toUpperCase();
+  const c = raw.replace(/[^0-9X]/g,'');
+  if(/^\d{7}[\dX]$/.test(c)) return `${c.slice(0,1)}.${c.slice(1,4)}.${c.slice(4,7)}-${c.slice(7)}`;
+  if(/^\d{8}[\dX]$/.test(c)) return `${c.slice(0,2)}.${c.slice(2,5)}.${c.slice(5,8)}-${c.slice(8)}`;
+  return raw.replace(/[^0-9A-Z.\-\/ ]/g,'').slice(0,20);
+}
+function bindMask(el, fn, liveFn){
+  if(!el) return;
+  if(liveFn) el.addEventListener('input', ()=>{ el.value = liveFn(el.value); });
+  el.addEventListener('blur', ()=>{ el.value = fn(el.value); });
+}
+
+function formatEnd(e){
+  if(!e) return '';
+  const l1 = [e.logradouro, e.numero].filter(Boolean).join(', ');
+  const l2 = [l1, e.complemento].filter(Boolean).join(' — ');
+  const cidadeUf = [e.cidade, e.uf].filter(Boolean).join('/');
+  const partes = [l2, e.bairro, cidadeUf, e.cep ? 'CEP ' + e.cep : ''].filter(Boolean);
+  return partes.join(' · ');
+}
+
 function instResumoTexto(inst){
+  const r = inst.rep, c = inst.contador;
+  const v = x=>x||'—';
   return [
     `Instituição: ${inst.nome}`,
-    `CNPJ: ${inst.cnpj||'—'}`,
-    `Endereço: ${inst.endereco||'—'}`,
-    `Telefone: ${inst.telefone||'—'}`,
+    `CNPJ: ${v(inst.cnpj)}`,
+    `E-mail: ${v(inst.email)}`,
+    `Telefone: ${v(inst.telefone)}`,
+    `Endereço: ${v(formatEnd(inst.end))}`,
     `Data de inscrição: ${inst.dataInscricao?fmtDate(inst.dataInscricao):'—'}`,
     ``,
-    `Representante legal: ${inst.rep.nome||'—'}`,
-    `CPF: ${inst.rep.cpf||'—'}`,
-    `E-mail: ${inst.rep.email||'—'}`,
-    `Telefone: ${inst.rep.telefone||'—'}`
+    `Representante legal: ${v(r.nome)}`,
+    `CPF: ${v(r.cpf)}`,
+    `RG: ${v(r.rg)}`,
+    `Profissão: ${v(r.profissao)}`,
+    `Endereço: ${v(formatEnd(r.end))}`,
+    `E-mail: ${v(r.email)}`,
+    `Telefone: ${v(r.telefone)}`,
+    ``,
+    `Contador: ${v(c.nome)}`,
+    `CPF: ${v(c.cpf)}`,
+    `RG: ${v(c.rg)}`,
+    `Profissão: ${v(c.profissao)}`,
+    `CRC: ${c.crcNumero ? (c.crcUf ? c.crcUf + ' ' : '') + c.crcNumero : '—'}`,
+    `E-mail: ${v(c.email)}`,
+    `Telefone: ${v(c.telefone)}`,
+    `Endereço: ${v(formatEnd(c.end))}`
   ].join('\n');
 }
 
 function renderInstituicoes(c){
   if(state.instituicoes.length===0){
-    c.innerHTML = `<div class="empty-state"><div class="big">Nenhuma instituição cadastrada</div><div>Use "+ Nova instituição" para cadastrar a primeira, com CNPJ, endereço e dados do representante legal.</div></div>`;
+    c.innerHTML = `<div class="empty-state"><div class="big">Nenhuma instituição cadastrada</div><div>Use "+ Nova instituição" para cadastrar a primeira, com os dados da instituição, do representante legal e do contador.</div></div>`;
     return;
   }
-  const kv = (label, value, copyVal)=>{
+  const kv = (label, value)=>{
     const has = !!String(value||'').trim();
     return `<div class="kv"><span class="k">${label}</span><span class="v ${has?'':'empty'}">${has?escapeHtml(value):'não informado'}</span>
-      ${has?`<button class="icon-btn cp" data-copy="${escapeAttr(copyVal!==undefined?copyVal:value)}" data-label="${escapeAttr(label)}" title="Copiar ${escapeAttr(label)}">📋</button>`:''}</div>`;
+      ${has?`<button class="icon-btn cp" data-copy="${escapeAttr(value)}" data-label="${escapeAttr(label)}" title="Copiar ${escapeAttr(label)}">📋</button>`:''}</div>`;
   };
   state.instituicoes.forEach(inst=>{
+    const r = inst.rep, ct = inst.contador;
     const block = document.createElement('div');
     block.className = 'inst-block';
     block.innerHTML = `
@@ -1429,12 +1571,18 @@ function renderInstituicoes(c){
         </div>
       </div>
       <div class="inst-body">
-        <div class="kv-col"><h4>Instituição</h4>
-          ${kv('Nome', inst.nome)}${kv('CNPJ', inst.cnpj)}${kv('Endereço', inst.endereco)}${kv('Telefone', inst.telefone)}
-          ${kv('Data de inscrição', inst.dataInscricao?fmtDate(inst.dataInscricao):'')}
+        <div class="kv-col"><h4>Dados da instituição</h4>
+          ${kv('Nome', inst.nome)}${kv('CNPJ', inst.cnpj)}${kv('E-mail', inst.email)}${kv('Telefone', inst.telefone)}
+          ${kv('Endereço', formatEnd(inst.end))}${kv('Data de inscrição', inst.dataInscricao?fmtDate(inst.dataInscricao):'')}
         </div>
         <div class="kv-col"><h4>Representante legal</h4>
-          ${kv('Nome', inst.rep.nome)}${kv('CPF', inst.rep.cpf)}${kv('E-mail', inst.rep.email)}${kv('Telefone', inst.rep.telefone)}
+          ${kv('Nome', r.nome)}${kv('CPF', r.cpf)}${kv('RG', r.rg)}${kv('Profissão', r.profissao)}
+          ${kv('Endereço', formatEnd(r.end))}${kv('E-mail', r.email)}${kv('Telefone', r.telefone)}
+        </div>
+        <div class="kv-col"><h4>Contador</h4>
+          ${kv('Nome', ct.nome)}${kv('CPF', ct.cpf)}${kv('RG', ct.rg)}${kv('Profissão', ct.profissao)}
+          ${kv('CRC', ct.crcNumero ? (ct.crcUf ? ct.crcUf + ' ' : '') + ct.crcNumero : '')}
+          ${kv('E-mail', ct.email)}${kv('Telefone', ct.telefone)}${kv('Endereço', formatEnd(ct.end))}
         </div>
       </div>
       <div class="inst-projs">
@@ -1451,46 +1599,106 @@ function renderInstituicoes(c){
   });
 }
 
+// Campos de endereço completos. prefix identifica o bloco (i_, r_, c_).
+function endFieldsHtml(prefix, e){
+  return `
+    <div class="addr-title">Endereço</div>
+    <div class="field-row r-1-2">
+      <div class="field"><label>CEP</label><input id="${prefix}cep" value="${escapeAttr(e.cep)}" placeholder="00000-000" inputmode="numeric" style="font-family:var(--font-mono);"></div>
+      <div class="field"><label>Logradouro</label><input id="${prefix}logradouro" value="${escapeAttr(e.logradouro)}" placeholder="Rua, avenida..."></div>
+    </div>
+    <div class="field-row r-1-2">
+      <div class="field"><label>Número</label><input id="${prefix}numero" value="${escapeAttr(e.numero)}"></div>
+      <div class="field"><label>Complemento</label><input id="${prefix}complemento" value="${escapeAttr(e.complemento)}" placeholder="Sala, bloco, apto..."></div>
+    </div>
+    <div class="field"><label>Bairro</label><input id="${prefix}bairro" value="${escapeAttr(e.bairro)}"></div>
+    <div class="field-row r-3-1">
+      <div class="field"><label>Cidade</label><input id="${prefix}cidade" value="${escapeAttr(e.cidade)}"></div>
+      <div class="field"><label>UF</label><select id="${prefix}uf"><option value="">—</option>${UFS.map(u=>`<option ${e.uf===u?'selected':''}>${u}</option>`).join('')}</select></div>
+    </div>`;
+}
+function readEnd(overlay, prefix){
+  const o = {};
+  END_KEYS.forEach(k=>{ o[k] = (overlay.querySelector('#'+prefix+k).value||'').trim(); });
+  o.cep = maskCEP(o.cep);
+  return o;
+}
+
 function openInstModal(instId){
   const isNew = !instId;
   const orig = isNew ? null : instById(instId);
   const i = isNew
-    ? {id:uid(), nome:'', cor: PALETTE[state.instituicoes.length % PALETTE.length], cnpj:'', endereco:'', telefone:'', dataInscricao:'', rep:{nome:'',cpf:'',email:'',telefone:''}, excluirIndicadores:false, projetos:[]}
+    ? (()=>{ const n = {id:uid(), nome:'', cor: PALETTE[state.instituicoes.length % PALETTE.length], excluirIndicadores:false, projetos:[]}; normalizeInst(n, state.instituicoes.length); n.nome=''; return n; })()
     : orig;
+  const r = i.rep, ct = i.contador;
   let cor = i.cor;
   const overlay = makeModal(isNew?'Nova instituição':'Editar instituição', `
-    <div class="field"><label>Nome da instituição</label><input id="i_nome" value="${escapeAttr(i.nome)}"></div>
-    <div class="field-row">
-      <div class="field"><label>CNPJ</label><input id="i_cnpj" value="${escapeAttr(i.cnpj)}" placeholder="00.000.000/0000-00" style="font-family:var(--font-mono);"></div>
-      <div class="field"><label>Telefone</label><input id="i_tel" value="${escapeAttr(i.telefone)}" placeholder="(41) 0000-0000"></div>
-    </div>
-    <div class="field"><label>Endereço</label><input id="i_end" value="${escapeAttr(i.endereco)}" placeholder="Rua, número, bairro, cidade/UF, CEP"></div>
-    <div class="field-row">
-      <div class="field"><label>Data de inscrição</label><input id="i_insc" type="date" value="${i.dataInscricao}"></div>
-      <div class="field"><label>Cor de identificação</label>
-        <div class="swatches">${PALETTE.map(p=>`<button type="button" data-cor="${p}" style="background:${p}" class="${cor===p?'active':''}"></button>`).join('')}</div></div>
-    </div>
+    <div class="form-cols">
+      <div class="form-col">
+        <h3>Dados da instituição</h3>
+        <div class="field"><label>Nome da instituição</label><input id="i_nome" value="${escapeAttr(i.nome)}"></div>
+        <div class="field"><label>CNPJ</label><input id="i_cnpj" value="${escapeAttr(i.cnpj)}" placeholder="00.000.000/0000-00" inputmode="numeric" style="font-family:var(--font-mono);"></div>
+        <div class="field"><label>E-mail</label><input id="i_email" type="email" value="${escapeAttr(i.email)}"></div>
+        <div class="field-row">
+          <div class="field"><label>Telefone</label><input id="i_tel" value="${escapeAttr(i.telefone)}" placeholder="(41) 0000-0000" inputmode="tel"></div>
+          <div class="field"><label>Data de inscrição</label><input id="i_insc" type="date" value="${i.dataInscricao}"></div>
+        </div>
+        ${endFieldsHtml('ie_', i.end)}
+        <div class="field"><label>Cor de identificação</label>
+          <div class="swatches">${PALETTE.map(p=>`<button type="button" data-cor="${p}" style="background:${p}" class="${cor===p?'active':''}"></button>`).join('')}</div></div>
+        <div class="field"><label style="display:flex;align-items:center;gap:7px;text-transform:none;font-size:13px;color:var(--ink);">
+          <input type="checkbox" id="i_excl" ${i.excluirIndicadores?'checked':''} style="width:auto;"> Não contar nos indicadores de certidões</label></div>
+      </div>
 
-    <div class="modal-sub">Representante legal</div>
-    <div class="field"><label>Nome</label><input id="r_nome" value="${escapeAttr(i.rep.nome)}"></div>
-    <div class="field-row">
-      <div class="field"><label>CPF</label><input id="r_cpf" value="${escapeAttr(i.rep.cpf)}" placeholder="000.000.000-00" style="font-family:var(--font-mono);"></div>
-      <div class="field"><label>Telefone</label><input id="r_tel" value="${escapeAttr(i.rep.telefone)}"></div>
-    </div>
-    <div class="field"><label>E-mail</label><input id="r_email" type="email" value="${escapeAttr(i.rep.email)}"></div>
+      <div class="form-col">
+        <h3>Representante legal</h3>
+        <div class="field"><label>Nome</label><input id="r_nome" value="${escapeAttr(r.nome)}"></div>
+        <div class="field"><label>CPF</label><input id="r_cpf" value="${escapeAttr(r.cpf)}" placeholder="000.000.000-00" inputmode="numeric" style="font-family:var(--font-mono);"></div>
+        <div class="field-row">
+          <div class="field"><label>RG</label><input id="r_rg" value="${escapeAttr(r.rg)}" placeholder="00.000.000-0" style="font-family:var(--font-mono);"></div>
+          <div class="field"><label>Profissão</label><input id="r_prof" value="${escapeAttr(r.profissao)}"></div>
+        </div>
+        ${endFieldsHtml('re_', r.end)}
+        <div class="field"><label>E-mail</label><input id="r_email" type="email" value="${escapeAttr(r.email)}"></div>
+        <div class="field"><label>Telefone</label><input id="r_tel" value="${escapeAttr(r.telefone)}" placeholder="(41) 00000-0000" inputmode="tel"></div>
+      </div>
 
-    <div class="field"><label style="display:flex;align-items:center;gap:7px;text-transform:none;font-size:13px;color:var(--ink);">
-      <input type="checkbox" id="i_excl" ${i.excluirIndicadores?'checked':''} style="width:auto;"> Não contar esta instituição nos indicadores de certidões</label></div>
+      <div class="form-col">
+        <h3>Contador</h3>
+        <div class="field"><label>Nome</label><input id="c_nome" value="${escapeAttr(ct.nome)}"></div>
+        <div class="field"><label>CPF</label><input id="c_cpf" value="${escapeAttr(ct.cpf)}" placeholder="000.000.000-00" inputmode="numeric" style="font-family:var(--font-mono);"></div>
+        <div class="field-row">
+          <div class="field"><label>RG</label><input id="c_rg" value="${escapeAttr(ct.rg)}" placeholder="00.000.000-0" style="font-family:var(--font-mono);"></div>
+          <div class="field"><label>Profissão</label><input id="c_prof" value="${escapeAttr(ct.profissao)}" placeholder="Contador(a)"></div>
+        </div>
+        <div class="field-row r-1-2">
+          <div class="field"><label>CRC (UF)</label><select id="c_crcuf"><option value="">—</option>${UFS.map(u=>`<option ${ct.crcUf===u?'selected':''}>${u}</option>`).join('')}</select></div>
+          <div class="field"><label>Número do CRC</label><input id="c_crcnum" value="${escapeAttr(ct.crcNumero)}" placeholder="Ex.: 012345/O-6" style="font-family:var(--font-mono);"></div>
+        </div>
+        <div class="field"><label>E-mail</label><input id="c_email" type="email" value="${escapeAttr(ct.email)}"></div>
+        <div class="field"><label>Telefone</label><input id="c_tel" value="${escapeAttr(ct.telefone)}" placeholder="(41) 00000-0000" inputmode="tel"></div>
+        ${endFieldsHtml('ce_', ct.end)}
+      </div>
+    </div>
 
     <div class="modal-actions">
       <div>${!isNew?`<button class="btn danger small" id="i_del">Excluir</button>`:''}</div>
       <div style="display:flex;gap:8px;"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="i_save">${isNew?'Cadastrar':'Salvar'}</button></div>
-    </div>`);
+    </div>`, 1180);
+
+  // máscaras
+  const q = s=>overlay.querySelector(s);
+  bindMask(q('#i_cnpj'), maskCNPJ, maskCNPJ);
+  ['#r_cpf','#c_cpf'].forEach(s=>bindMask(q(s), maskCPF, maskCPF));
+  ['#r_rg','#c_rg'].forEach(s=>bindMask(q(s), maskRG));
+  ['#i_tel','#r_tel','#c_tel'].forEach(s=>bindMask(q(s), maskPhone, maskPhone));
+  ['#ie_cep','#re_cep','#ce_cep'].forEach(s=>bindMask(q(s), maskCEP, maskCEP));
+
   overlay.querySelectorAll('.swatches button').forEach(b=>b.onclick = ()=>{
     cor = b.dataset.cor; overlay.querySelectorAll('.swatches button').forEach(x=>x.classList.toggle('active', x===b));
   });
   if(!isNew){
-    overlay.querySelector('#i_del').onclick = ()=>{
+    q('#i_del').onclick = ()=>{
       const nTar = state.tarefas.filter(t=>t.instituicaoId===i.id).length;
       const nCert = state.certidoes.filter(x=>x.instituicaoId===i.id).length;
       const nLink = state.links.filter(l=>l.instituicaoId===i.id).length;
@@ -1501,20 +1709,38 @@ function openInstModal(instId){
       scheduleSave(); overlay.remove(); render(); toast('Instituição excluída.');
     };
   }
-  overlay.querySelector('#i_save').onclick = ()=>{
-    const nome = overlay.querySelector('#i_nome').value.trim();
+  q('#i_save').onclick = ()=>{
+    const nome = q('#i_nome').value.trim();
     if(!nome){ toast('Informe o nome da instituição.'); return; }
-    const email = overlay.querySelector('#r_email').value.trim();
-    if(email && !/^\S+@\S+\.\S+$/.test(email)){ toast('O e-mail do representante parece inválido.'); return; }
+    const emails = [['#i_email','instituição'],['#r_email','representante'],['#c_email','contador']];
+    for(const [sel, quem] of emails){
+      const v = q(sel).value.trim();
+      if(v && !/^\S+@\S+\.\S+$/.test(v)){ toast(`O e-mail do ${quem} parece inválido.`); q(sel).focus(); return; }
+    }
+    const cpfs = [['#r_cpf','representante'],['#c_cpf','contador']];
+    for(const [sel, quem] of cpfs){
+      const d = onlyDigits(q(sel).value);
+      if(d && d.length!==11){ toast(`O CPF do ${quem} precisa ter 11 dígitos.`); q(sel).focus(); return; }
+    }
+    const val = s=>q(s).value.trim();
     Object.assign(i, {
       nome, cor,
-      cnpj: overlay.querySelector('#i_cnpj').value.trim(),
-      telefone: overlay.querySelector('#i_tel').value.trim(),
-      endereco: overlay.querySelector('#i_end').value.trim(),
-      dataInscricao: overlay.querySelector('#i_insc').value,
-      excluirIndicadores: overlay.querySelector('#i_excl').checked,
-      rep: { nome: overlay.querySelector('#r_nome').value.trim(), cpf: overlay.querySelector('#r_cpf').value.trim(),
-             email, telefone: overlay.querySelector('#r_tel').value.trim() }
+      cnpj: maskCNPJ(val('#i_cnpj')) || val('#i_cnpj'),
+      email: val('#i_email'),
+      telefone: maskPhone(val('#i_tel')),
+      dataInscricao: q('#i_insc').value,
+      excluirIndicadores: q('#i_excl').checked,
+      end: readEnd(overlay, 'ie_')
+    });
+    i.endereco = formatEnd(i.end); // texto único, mantido para compatibilidade e consulta
+    i.rep = Object.assign(i.rep, {
+      nome: val('#r_nome'), cpf: maskCPF(val('#r_cpf')), rg: maskRG(val('#r_rg')), profissao: val('#r_prof'),
+      email: val('#r_email'), telefone: maskPhone(val('#r_tel')), end: readEnd(overlay, 're_')
+    });
+    i.contador = Object.assign(i.contador, {
+      nome: val('#c_nome'), cpf: maskCPF(val('#c_cpf')), rg: maskRG(val('#c_rg')), profissao: val('#c_prof'),
+      crcUf: q('#c_crcuf').value, crcNumero: val('#c_crcnum'),
+      email: val('#c_email'), telefone: maskPhone(val('#c_tel')), end: readEnd(overlay, 'ce_')
     });
     if(isNew) state.instituicoes.push(i);
     scheduleSave(); overlay.remove(); render();

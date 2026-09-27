@@ -455,7 +455,7 @@ const CONT_KEYS = ['nome','cpf','rg','profissao','crcUf','crcNumero','email','te
 function normalizeInst(i, idx){
   i.nome = i.nome || 'Instituição';
   if(!i.cor) i.cor = PALETTE[idx % PALETTE.length];
-  ['cnpj','email','endereco','telefone','dataInscricao'].forEach(k=>{ if(typeof i[k] !== 'string') i[k] = ''; });
+  ['sigla','cnpj','email','endereco','telefone','dataInscricao'].forEach(k=>{ if(typeof i[k] !== 'string') i[k] = ''; });
   i.end = normalizeEnd(i.end, i.endereco);
   i.endereco = formatEnd(i.end);
   i.rep = normalizePessoa(i.rep, REP_KEYS);
@@ -550,6 +550,8 @@ function setSaveState(s){
 
 /* ================== HELPERS ================== */
 function instById(id){ return state.instituicoes.find(i=>i.id===id); }
+// Como a instituição aparece no sistema: a sigla, se houver; senão o nome completo.
+function instLabel(i){ return i ? ((i.sigla||'').trim() || i.nome) : ''; }
 function projById(instId, projId){ const i=instById(instId); return i && i.projetos.find(p=>p.id===projId); }
 function membroById(id){ return state.membros.find(m=>m.id===id); }
 function statusById(id){ return PROJ_STATUS.find(s=>s.id===id) || PROJ_STATUS[0]; }
@@ -713,7 +715,7 @@ function openCertListModal(kind){
       <table class="tbl"><thead><tr><th>Instituição</th><th>Certidão</th><th>Vencimento</th><th>${kind==='vencidas'?'Dias em atraso':'Dias restantes'}</th></tr></thead>
       <tbody>${items.map(it=>`
         <tr class="click" data-inst="${it.inst.id}" data-tipo="${it.tipo.id}">
-          <td>${escapeHtml(it.inst.nome)}</td><td>${escapeHtml(it.tipo.nome)}</td>
+          <td>${escapeHtml(instLabel(it.inst))}</td><td>${escapeHtml(it.tipo.nome)}</td>
           <td class="mono">${fmtDate(it.cert.proximoVencimento)}</td>
           <td class="mono" style="color:${kind==='vencidas'?'var(--bad)':'var(--warn)'};">${Math.abs(it.dias)}</td>
         </tr>`).join('')}</tbody></table>
@@ -749,7 +751,7 @@ function renderTarefas(c){
   filterBar.innerHTML = `
     <input type="text" id="searchFilter" placeholder="🔎 Buscar por título..." value="${escapeAttr(filters.busca)}">
     <select id="instFilter"><option value="">Todas instituições</option>
-      ${state.instituicoes.map(i=>`<option value="${i.id}" ${filters.inst===i.id?'selected':''}>${escapeHtml(i.nome)}</option>`).join('')}
+      ${state.instituicoes.map(i=>`<option value="${i.id}" ${filters.inst===i.id?'selected':''}>${escapeHtml(instLabel(i))}</option>`).join('')}
     </select>
     <select id="projFilter"></select>
     <select id="respFilter"><option value="">Todos responsáveis</option>
@@ -776,8 +778,8 @@ function renderTarefas(c){
   if(instSel){
     projFilterEl.innerHTML = projOptionsHtml(instSel, filters.proj, 'Todos projetos');
   } else {
-    const all = allProjects().sort((a,b)=>a.inst.nome.localeCompare(b.inst.nome) || a.p.nome.localeCompare(b.p.nome));
-    projFilterEl.innerHTML = `<option value="">Todos projetos</option>` + all.map(x=>`<option value="${x.p.id}" ${filters.proj===x.p.id?'selected':''}>${escapeHtml(x.inst.nome)} — ${escapeHtml(projLabel(x.p))}</option>`).join('');
+    const all = allProjects().sort((a,b)=>instLabel(a.inst).localeCompare(instLabel(b.inst)) || a.p.nome.localeCompare(b.p.nome));
+    projFilterEl.innerHTML = `<option value="">Todos projetos</option>` + all.map(x=>`<option value="${x.p.id}" ${filters.proj===x.p.id?'selected':''}>${escapeHtml(instLabel(x.inst))} — ${escapeHtml(projLabel(x.p))}</option>`).join('');
   }
 
   const searchEl = filterBar.querySelector('#searchFilter');
@@ -888,7 +890,7 @@ function renderTarefasLista(c, list){
       <td class="mono small muted">${t.criadoEm?fmtDateTime(t.criadoEm):'—'}</td>
       <td style="font-weight:${t.naoLidoPara?700:400};">${t.naoLidoPara?'<span class="unread-dot"></span>':''}${t.recorrencia?'🔁 ':''}${escapeHtml(t.titulo)}</td>
       <td>${escapeHtml(t.tipo||'Outro')}</td>
-      <td>${inst?escapeHtml(inst.nome):'—'}</td>
+      <td>${inst?`<span title="${escapeAttr(inst.nome)}">${escapeHtml(instLabel(inst))}</span>`:'—'}</td>
       <td>${proj?escapeHtml(projLabel(proj)):'<span class="muted">Geral</span>'}</td>
       <td>${avatarBadge(membroById(t.solicitanteId))||'—'}</td>
       <td>${avatarBadge(membroById(t.responsavelId))||'—'}</td>
@@ -931,7 +933,7 @@ function renderCard(t){
   card.innerHTML = `
     <div class="tags">
       <span class="tag type">${escapeHtml(t.tipo||'Outro')}</span>
-      ${inst?`<span class="tag">${escapeHtml(inst.nome)}${proj?` · ${escapeHtml(proj.codigo||proj.nome)}`:''}</span>`:''}
+      ${inst?`<span class="tag">${escapeHtml(instLabel(inst))}${proj?` · ${escapeHtml(proj.codigo||proj.nome)}`:''}</span>`:''}
     </div>
     <h4 style="font-weight:${t.naoLidoPara?800:500};">${t.naoLidoPara?'<span class="unread-dot"></span>':''}${t.recorrencia?'🔁 ':''}${escapeHtml(t.titulo)}</h4>
     ${t.checklist.length ? `<div style="font-size:11px;color:var(--muted);margin:-4px 0 2px;">☑ ${t.checklist.filter(i=>i.feito).length}/${t.checklist.length} do checklist</div>` : ''}
@@ -982,7 +984,7 @@ function openTaskModal(taskId){
     </div>
     <div class="field-row">
       <div class="field"><label>Instituição</label>
-        <select id="f_inst">${state.instituicoes.map(i=>`<option value="${i.id}" ${t.instituicaoId===i.id?'selected':''}>${escapeHtml(i.nome)}</option>`).join('')}</select></div>
+        <select id="f_inst">${state.instituicoes.map(i=>`<option value="${i.id}" ${t.instituicaoId===i.id?'selected':''}>${escapeHtml(instLabel(i))}</option>`).join('')}</select></div>
       <div class="field"><label>Projeto</label><select id="f_proj"></select></div>
     </div>
     <div class="field-row">
@@ -1270,7 +1272,7 @@ function renderProjetos(c){
   filterBar.className = 'filters';
   filterBar.innerHTML = `
     <input type="text" id="pBusca" placeholder="🔎 Buscar projeto ou código..." value="${escapeAttr(f.busca)}">
-    <select id="pInst"><option value="">Todas instituições</option>${state.instituicoes.map(i=>`<option value="${i.id}" ${f.inst===i.id?'selected':''}>${escapeHtml(i.nome)}</option>`).join('')}</select>
+    <select id="pInst"><option value="">Todas instituições</option>${state.instituicoes.map(i=>`<option value="${i.id}" ${f.inst===i.id?'selected':''}>${escapeHtml(instLabel(i))}</option>`).join('')}</select>
     <select id="pOrigem"><option value="">Todas origens</option>${state.origensProjeto.map(o=>`<option ${f.origem===o?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>
     <label class="chk"><input type="checkbox" id="pFin" ${f.finalizados?'checked':''}> mostrar finalizados</label>
     <div class="spacer"></div>
@@ -1308,7 +1310,7 @@ function renderProjetos(c){
     if(f.status==='acomp') return statusById(p.status).acomp;
     if(f.status) return p.status===f.status;
     return f.finalizados || p.status!=='finalizado';
-  }).sort((a,b)=> a.inst.nome.localeCompare(b.inst.nome) || order(a.p.status)-order(b.p.status) || a.p.nome.localeCompare(b.p.nome));
+  }).sort((a,b)=> instLabel(a.inst).localeCompare(instLabel(b.inst)) || order(a.p.status)-order(b.p.status) || a.p.nome.localeCompare(b.p.nome));
 
   if(list.length===0){
     const e = document.createElement('div');
@@ -1335,7 +1337,7 @@ function renderProjetos(c){
         const alt = (p.status==='alteracao'||p.status==='alteracao_aprovada') && p.alteracaoTipos.length
           ? `<div class="small muted" style="margin-top:3px;">${p.alteracaoTipos.map(escapeHtml).join(' · ')}</div>` : '';
         return `<tr class="click" data-inst="${inst.id}" data-proj="${p.id}">
-          <td><span style="display:inline-flex;align-items:center;gap:7px;"><span class="inst-swatch" style="background:${inst.cor}"></span>${escapeHtml(inst.nome)}</span></td>
+          <td><span style="display:inline-flex;align-items:center;gap:7px;"><span class="inst-swatch" style="background:${inst.cor}"></span><span title="${escapeAttr(inst.nome)}">${escapeHtml(instLabel(inst))}</span></span></td>
           <td style="font-weight:600;">${escapeHtml(p.nome)}</td>
           <td class="mono">${escapeHtml(p.codigo)||'<span class="muted">—</span>'}</td>
           <td>${escapeHtml(p.origem)||'<span class="muted">—</span>'}</td>
@@ -1362,7 +1364,7 @@ function openProjModal(instId, projId){
 
   const overlay = makeModal(isNew?'Novo projeto':'Editar projeto', `
     <div class="field"><label>Instituição</label>
-      <select id="p_inst">${state.instituicoes.map(i=>`<option value="${i.id}" ${inst0.id===i.id?'selected':''}>${escapeHtml(i.nome)}</option>`).join('')}</select></div>
+      <select id="p_inst">${state.instituicoes.map(i=>`<option value="${i.id}" ${inst0.id===i.id?'selected':''}>${escapeHtml(instLabel(i))}</option>`).join('')}</select></div>
     <div class="field"><label>Nome do projeto</label><input id="p_nome" value="${escapeAttr(p.nome)}" placeholder="Ex.: Arte em Movimento"></div>
     <div class="field-row">
       <div class="field"><label>Número / código</label><input id="p_codigo" value="${escapeAttr(p.codigo)}" placeholder="Ex.: 123/2026"></div>
@@ -1521,6 +1523,7 @@ function instResumoTexto(inst){
   const v = x=>x||'—';
   return [
     `Instituição: ${inst.nome}`,
+    ...(inst.sigla ? [`Sigla: ${inst.sigla}`] : []),
     `CNPJ: ${v(inst.cnpj)}`,
     `E-mail: ${v(inst.email)}`,
     `Telefone: ${v(inst.telefone)}`,
@@ -1563,7 +1566,7 @@ function renderInstituicoes(c){
     block.innerHTML = `
       <div class="inst-head">
         <span class="inst-swatch" style="background:${inst.cor}"></span>
-        <h3>${escapeHtml(inst.nome)}</h3>
+        <h3 title="${escapeAttr(inst.nome)}">${escapeHtml(instLabel(inst))}</h3>
         ${inst.excluirIndicadores?`<span class="tag" title="Não entra nos indicadores do topo">fora dos indicadores</span>`:''}
         <div class="actions">
           <button class="btn ghost small copyAll">📋 Copiar todos os dados</button>
@@ -1572,7 +1575,7 @@ function renderInstituicoes(c){
       </div>
       <div class="inst-body">
         <div class="kv-col"><h4>Dados da instituição</h4>
-          ${kv('Nome', inst.nome)}${kv('CNPJ', inst.cnpj)}${kv('E-mail', inst.email)}${kv('Telefone', inst.telefone)}
+          ${kv('Nome', inst.nome)}${kv('Sigla', inst.sigla)}${kv('CNPJ', inst.cnpj)}${kv('E-mail', inst.email)}${kv('Telefone', inst.telefone)}
           ${kv('Endereço', formatEnd(inst.end))}${kv('Data de inscrição', inst.dataInscricao?fmtDate(inst.dataInscricao):'')}
         </div>
         <div class="kv-col"><h4>Representante legal</h4>
@@ -1591,7 +1594,7 @@ function renderInstituicoes(c){
         <button class="btn ghost small addProj">+ projeto</button>
       </div>`;
     block.querySelectorAll('.cp').forEach(b=>b.onclick = ()=>copyText(b.dataset.copy, `${b.dataset.label} copiado!`));
-    block.querySelector('.copyAll').onclick = ()=>copyText(instResumoTexto(inst), `Dados de ${inst.nome} copiados!`);
+    block.querySelector('.copyAll').onclick = ()=>copyText(instResumoTexto(inst), `Dados de ${instLabel(inst)} copiados!`);
     block.querySelector('.editInst').onclick = ()=>openInstModal(inst.id);
     block.querySelector('.addProj').onclick = ()=>openProjModal(inst.id, null);
     block.querySelectorAll('.proj-pill').forEach(pl=>pl.onclick = ()=>openProjModal(inst.id, pl.dataset.proj));
@@ -1636,7 +1639,9 @@ function openInstModal(instId){
     <div class="form-cols">
       <div class="form-col">
         <h3>Dados da instituição</h3>
-        <div class="field"><label>Nome da instituição</label><input id="i_nome" value="${escapeAttr(i.nome)}"></div>
+        <div class="field"><label>Nome completo da instituição</label><input id="i_nome" value="${escapeAttr(i.nome)}"></div>
+        <div class="field"><label>Sigla</label><input id="i_sigla" value="${escapeAttr(i.sigla)}" placeholder="Ex.: ABIG" maxlength="20" style="text-transform:uppercase;font-family:var(--font-mono);">
+          <div class="hint" style="margin:4px 0 0;">É como a instituição aparece no Gestor (listas, filtros, cartões). Sem sigla, aparece o nome completo.</div></div>
         <div class="field"><label>CNPJ</label><input id="i_cnpj" value="${escapeAttr(i.cnpj)}" placeholder="00.000.000/0000-00" inputmode="numeric" style="font-family:var(--font-mono);"></div>
         <div class="field"><label>E-mail</label><input id="i_email" type="email" value="${escapeAttr(i.email)}"></div>
         <div class="field-row">
@@ -1723,8 +1728,11 @@ function openInstModal(instId){
       if(d && d.length!==11){ toast(`O CPF do ${quem} precisa ter 11 dígitos.`); q(sel).focus(); return; }
     }
     const val = s=>q(s).value.trim();
+    const sigla = val('#i_sigla').toUpperCase().replace(/\s+/g,' ');
+    const dup = sigla && state.instituicoes.find(x=>x.id!==i.id && normalizeStr(x.sigla)===normalizeStr(sigla));
+    if(dup){ toast(`A sigla ${sigla} já é usada por ${dup.nome}.`); q('#i_sigla').focus(); return; }
     Object.assign(i, {
-      nome, cor,
+      nome, sigla, cor,
       cnpj: maskCNPJ(val('#i_cnpj')) || val('#i_cnpj'),
       email: val('#i_email'),
       telefone: maskPhone(val('#i_tel')),
@@ -1754,7 +1762,7 @@ function renderCertidoes(c){
   filterBar.className='filters';
   filterBar.innerHTML = `
     <select id="instFilterCert"><option value="">Todas instituições</option>
-      ${state.instituicoes.map(i=>`<option value="${i.id}" ${certInst===i.id?'selected':''}>${escapeHtml(i.nome)}</option>`).join('')}
+      ${state.instituicoes.map(i=>`<option value="${i.id}" ${certInst===i.id?'selected':''}>${escapeHtml(instLabel(i))}</option>`).join('')}
     </select>
     <div class="spacer"></div>
     <button class="btn ghost small" id="importCertBtn">⇪ Importar certidões</button>`;
@@ -1783,7 +1791,7 @@ function renderCertidoes(c){
     block.innerHTML = `
       <div class="inst-head">
         <span class="inst-swatch" style="background:${inst.cor}"></span>
-        <h3>${escapeHtml(inst.nome)}</h3>
+        <h3 title="${escapeAttr(inst.nome)}">${escapeHtml(instLabel(inst))}</h3>
         ${inst.cnpj?`<button class="icon-btn cpCnpj mono small" title="Copiar CNPJ">📋 ${escapeHtml(inst.cnpj)}</button>`:''}
         <div class="stats">
           ${ok?`<span style="color:var(--ok)">${ok} em dia</span>`:''}
@@ -1792,7 +1800,7 @@ function renderCertidoes(c){
         </div>
       </div>`;
     const cp = block.querySelector('.cpCnpj');
-    if(cp) cp.onclick = ()=>copyText(inst.cnpj, `CNPJ de ${inst.nome} copiado!`);
+    if(cp) cp.onclick = ()=>copyText(inst.cnpj, `CNPJ de ${instLabel(inst)} copiado!`);
     const grid = document.createElement('div');
     grid.className='cert-grid';
     state.certidaoTipos.forEach(tipo=>{
@@ -1830,7 +1838,7 @@ function openCertModal(instId, tipoId){
   const tipo = state.certidaoTipos.find(t=>t.id===tipoId);
   if(!inst || !tipo) return;
   const overlay = makeModal(escapeHtml(tipo.nome), `
-    <div class="hint" style="margin:-8px 0 0;">${escapeHtml(inst.nome)}</div>
+    <div class="hint" style="margin:-8px 0 0;">${escapeHtml(inst.nome)}${inst.sigla?` (${escapeHtml(inst.sigla)})`:''}</div>
     <div class="field-row">
       <div class="field"><label>Última renovação</label><input id="c_ult" type="date" value="${cert.ultimaRenovacao||''}"></div>
       <div class="field"><label>Próximo vencimento</label><input id="c_prox" type="date" value="${cert.proximoVencimento||''}"></div>
@@ -1886,7 +1894,7 @@ function parseImportCertidoes(raw){
     const [instRaw, tipoRaw, ultimaRaw, proxRaw, linkRaw] = cols;
     const ultima = parseDateFlexible(ultimaRaw), proxima = parseDateFlexible(proxRaw);
     if(idx===0 && !ultima && !proxima && (normalizeStr(instRaw).includes('instituic') || normalizeStr(tipoRaw).includes('certid'))) return;
-    const inst = state.instituicoes.find(i=>normalizeStr(i.nome)===normalizeStr(instRaw));
+    const inst = state.instituicoes.find(i=>normalizeStr(i.nome)===normalizeStr(instRaw) || (i.sigla && normalizeStr(i.sigla)===normalizeStr(instRaw)));
     const tipo = state.certidaoTipos.find(t=>normalizeStr(t.nome)===normalizeStr(tipoRaw));
     let status='ok', error='';
     if(!inst){ status='erro'; error='instituição não encontrada'; }
@@ -1956,7 +1964,7 @@ function renderLinks(c){
   filterBar.innerHTML = `
     <input type="text" id="lBusca" placeholder="🔎 Buscar link..." value="${escapeAttr(f.busca)}">
     <select id="lInst"><option value="">Todas instituições</option><option value="__geral" ${f.inst==='__geral'?'selected':''}>Links gerais</option>
-      ${state.instituicoes.map(i=>`<option value="${i.id}" ${f.inst===i.id?'selected':''}>${escapeHtml(i.nome)}</option>`).join('')}</select>
+      ${state.instituicoes.map(i=>`<option value="${i.id}" ${f.inst===i.id?'selected':''}>${escapeHtml(instLabel(i))}</option>`).join('')}</select>
     <select id="lCat"><option value="">Todas categorias</option>${cats.map(x=>`<option ${f.cat===x?'selected':''}>${escapeHtml(x)}</option>`).join('')}</select>
     <div class="spacer"></div>
     ${(f.inst||f.cat||f.busca)?`<button class="chip-clear" id="lClear">limpar filtros</button>`:''}`;
@@ -2037,7 +2045,7 @@ function renderLinks(c){
       const own = state.links.filter(l=>l.instituicaoId===inst.id && match(l));
       const groups = [{title:'Geral da instituição', links: own.filter(l=>!l.projetoId || !projById(inst.id, l.projetoId))}];
       inst.projetos.forEach(p=>groups.push({title: projLabel(p), links: own.filter(l=>l.projetoId===p.id)}));
-      block(inst.nome, inst.cor, groups);
+      block(instLabel(inst), inst.cor, groups);
     });
   }
   if(state.links.length===0){
@@ -2063,7 +2071,7 @@ function openLinkModal(linkId){
     <div class="field"><label>Endereço (URL) — opcional</label><input id="l_url" placeholder="https://..." value="${escapeAttr(l.url)}"></div>
     <div class="field-row">
       <div class="field"><label>Instituição</label>
-        <select id="l_inst"><option value="">— Geral (todas) —</option>${state.instituicoes.map(i=>`<option value="${i.id}" ${l.instituicaoId===i.id?'selected':''}>${escapeHtml(i.nome)}</option>`).join('')}</select></div>
+        <select id="l_inst"><option value="">— Geral (todas) —</option>${state.instituicoes.map(i=>`<option value="${i.id}" ${l.instituicaoId===i.id?'selected':''}>${escapeHtml(instLabel(i))}</option>`).join('')}</select></div>
       <div class="field"><label>Projeto</label><select id="l_proj"></select></div>
     </div>
     <div class="field"><label>Categoria</label>

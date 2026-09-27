@@ -486,7 +486,7 @@ function normalizeState(saved){
   s.certidoes.forEach(c=>{ if(typeof c.link !== 'string') c.link = ''; });
   s.certidaoTipos.forEach(ct=>{ if(typeof ct.notificarApenasNoDia !== 'boolean') ct.notificarApenasNoDia = false; });
   s.links.forEach(l=>{
-    ['titulo','url','categoria','usuario','obs','instituicaoId','projetoId'].forEach(k=>{ if(typeof l[k] !== 'string') l[k] = ''; });
+    ['titulo','url','categoria','usuario','senha','obs','instituicaoId','projetoId'].forEach(k=>{ if(typeof l[k] !== 'string') l[k] = ''; });
   });
   s.tarefas.forEach(t=>{
     if(!Array.isArray(t.chat)) t.chat = [];
@@ -1970,7 +1970,7 @@ function renderLinks(c){
 
   const note = document.createElement('div');
   note.className = 'note';
-  note.innerHTML = '🔑 <b>Acessos e senhas:</b> registre aqui o endereço do sistema e o usuário (categoria "Acesso / Senha"). As senhas ficam só na aba "Acessos e Senhas" da planilha base — cadastre aqui um link para ela.';
+  note.innerHTML = '🔑 <b>Acessos e senhas:</b> use a categoria "Acesso / Senha" para guardar o endereço do sistema, o usuário e a senha. A senha aparece escondida (••••) — clique em 👁 para ver e em 📋 para copiar.';
   c.appendChild(note);
 
   const filtering = !!(f.inst||f.cat||f.busca);
@@ -1991,10 +1991,18 @@ function renderLinks(c){
         <div class="cn">${linkIcon(l.categoria)} ${escapeHtml(l.titulo)}</div>
         ${l.categoria?`<span class="tag" style="display:inline-block;margin-bottom:6px;">${escapeHtml(l.categoria)}</span>`:''}
         ${l.url?`<div class="cd" style="margin-top:2px;"><a href="${escapeAttr(l.url)}" target="_blank" rel="noopener" class="lk" style="color:var(--teal);text-decoration:underline;word-break:break-all;">${escapeHtml(l.url)}</a></div>`:''}
-        ${l.usuario?`<div class="cd" style="margin-top:6px;align-items:center;"><span>Usuário: <b style="color:var(--ink);">${escapeHtml(l.usuario)}</b></span><button class="icon-btn cpU" title="Copiar usuário">📋</button></div>`:''}
+        ${l.usuario?`<div class="cd" style="margin-top:6px;align-items:center;"><span style="word-break:break-all;">Usuário: <b style="color:var(--ink);">${escapeHtml(l.usuario)}</b></span><button class="icon-btn cpU" title="Copiar usuário">📋</button></div>`:''}
+        ${l.senha?`<div class="cd" style="margin-top:4px;align-items:center;"><span style="word-break:break-all;">Senha: <b class="pwVal" style="color:var(--ink);">••••••••</b></span><span style="display:flex;flex:none;"><button class="icon-btn pwShow" title="Mostrar/ocultar senha">👁</button><button class="icon-btn cpS" title="Copiar senha">📋</button></span></div>`:''}
         ${l.obs?`<div class="cd" style="margin-top:6px;white-space:pre-wrap;font-family:var(--font-body);">${escapeHtml(l.obs)}</div>`:''}`;
       const a = cell.querySelector('.lk'); if(a) a.onclick = e=>e.stopPropagation();
       const cu = cell.querySelector('.cpU'); if(cu) cu.onclick = e=>{ e.stopPropagation(); copyText(l.usuario, 'Usuário copiado!'); };
+      const cs = cell.querySelector('.cpS'); if(cs) cs.onclick = e=>{ e.stopPropagation(); copyText(l.senha, 'Senha copiada!'); };
+      const ps = cell.querySelector('.pwShow');
+      if(ps) ps.onclick = e=>{
+        e.stopPropagation();
+        const v = cell.querySelector('.pwVal'), vis = v.dataset.vis==='1';
+        v.textContent = vis ? '••••••••' : l.senha; v.dataset.vis = vis ? '' : '1';
+      };
       cell.onclick = ()=>openLinkModal(l.id);
       grid.appendChild(cell);
     });
@@ -2058,18 +2066,24 @@ function openLinkModal(linkId){
         <select id="l_inst"><option value="">— Geral (todas) —</option>${state.instituicoes.map(i=>`<option value="${i.id}" ${l.instituicaoId===i.id?'selected':''}>${escapeHtml(i.nome)}</option>`).join('')}</select></div>
       <div class="field"><label>Projeto</label><select id="l_proj"></select></div>
     </div>
+    <div class="field"><label>Categoria</label>
+      <input id="l_cat" list="l_cats" placeholder="Escolha ou digite" value="${escapeAttr(l.categoria)}">
+      <datalist id="l_cats">${LINK_CATS.map(x=>`<option value="${escapeAttr(x)}">`).join('')}</datalist></div>
     <div class="field-row">
-      <div class="field"><label>Categoria</label>
-        <input id="l_cat" list="l_cats" placeholder="Escolha ou digite" value="${escapeAttr(l.categoria)}">
-        <datalist id="l_cats">${LINK_CATS.map(x=>`<option value="${escapeAttr(x)}">`).join('')}</datalist></div>
       <div class="field"><label>Usuário / login — opcional</label><input id="l_user" value="${escapeAttr(l.usuario)}" autocomplete="off"></div>
+      <div class="field"><label>Senha — opcional</label>
+        <div style="display:flex;gap:6px;">
+          <input id="l_senha" type="password" value="${escapeAttr(l.senha)}" autocomplete="new-password" style="flex:1;min-width:0;">
+          <button type="button" class="btn ghost small" id="l_senha_show" title="Mostrar/ocultar senha" style="flex:none;padding:0 10px;">👁</button>
+        </div></div>
     </div>
-    <div class="hint" style="margin:-6px 0 0;">Não digite senhas aqui. Para acessos, informe o endereço e o usuário; a senha fica na aba "Acessos e Senhas" da planilha base.</div>
     <div class="field"><label>Observação — opcional</label><textarea id="l_obs" placeholder="Alguma nota sobre esse link...">${escapeHtml(l.obs)}</textarea></div>
     <div class="modal-actions">
       <div>${!isNew?`<button class="btn danger small" id="l_del">Excluir</button>`:''}</div>
       <div style="display:flex;gap:8px;"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="l_save">${isNew?'Adicionar link':'Salvar'}</button></div>
     </div>`, 520);
+  const senhaInp = overlay.querySelector('#l_senha');
+  overlay.querySelector('#l_senha_show').onclick = ()=>{ senhaInp.type = senhaInp.type==='password' ? 'text' : 'password'; };
   const instSel = overlay.querySelector('#l_inst'), projSel = overlay.querySelector('#l_proj');
   const refresh = sel=>{
     const inst = instById(instSel.value);
@@ -2094,6 +2108,7 @@ function openLinkModal(linkId){
       titulo, url, instituicaoId: instSel.value, projetoId: instSel.value ? projSel.value : '',
       categoria: overlay.querySelector('#l_cat').value.trim(),
       usuario: overlay.querySelector('#l_user').value.trim(),
+      senha: overlay.querySelector('#l_senha').value,
       obs: overlay.querySelector('#l_obs').value
     });
     if(isNew) state.links.push(l);

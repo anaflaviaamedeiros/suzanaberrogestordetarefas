@@ -471,6 +471,7 @@ function normalizeProj(p){
   if(typeof p.statusDesde !== 'string') p.statusDesde = '';
   if(!Array.isArray(p.historico)) p.historico = [];
   if(!Array.isArray(p.alteracaoTipos)) p.alteracaoTipos = [];
+  if(!Array.isArray(p.registros)) p.registros = []; // Histórico do Projeto (linha do tempo)
 }
 
 function normalizeState(saved){
@@ -1343,7 +1344,7 @@ function renderProjetos(c){
           ? `<div class="small muted" style="margin-top:3px;">${p.alteracaoTipos.map(escapeHtml).join(' · ')}</div>` : '';
         return `<tr class="click" data-inst="${inst.id}" data-proj="${p.id}">
           <td><span style="display:inline-flex;align-items:center;gap:7px;"><span class="inst-swatch" style="background:${inst.cor}"></span><span title="${escapeAttr(inst.nome)}">${escapeHtml(instLabel(inst))}</span></span></td>
-          <td style="font-weight:600;">${escapeHtml(p.nome)}</td>
+          <td style="font-weight:600;">${escapeHtml(p.nome)}${p.registros.length?`<div class="small muted" style="font-weight:400;" title="Registros no Histórico do Projeto">📝 ${p.registros.length} registro${p.registros.length>1?'s':''} · último ${fmtDate(p.registros[p.registros.length-1].criadoEm)}</div>`:''}</td>
           <td class="mono">${escapeHtml(p.codigo)||'<span class="muted">—</span>'}</td>
           <td>${escapeHtml(p.origem)||'<span class="muted">—</span>'}</td>
           <td class="mono small">${fmtDate(p.inicio)} → ${fmtDate(p.fim)}${fimNote}</td>
@@ -1363,7 +1364,7 @@ function openProjModal(instId, projId){
   const orig = isNew ? null : projById(inst0.id, projId);
   if(!isNew && !orig) return;
   const p = isNew
-    ? {id:uid(), nome:'', codigo:'', origem:'', inicio:'', fim:'', status:'proposta', statusDesde:'', historico:[], alteracaoTipos:[], obs:''}
+    ? {id:uid(), nome:'', codigo:'', origem:'', inicio:'', fim:'', status:'proposta', statusDesde:'', historico:[], alteracaoTipos:[], obs:'', registros:[]}
     : JSON.parse(JSON.stringify(orig));
   const me = currentMembro();
 
@@ -1395,6 +1396,16 @@ function openProjModal(instId, projId){
       <div class="check-grid">${ALT_TIPOS.map(a=>`<label><input type="checkbox" class="p_alt" value="${escapeAttr(a)}" ${p.alteracaoTipos.includes(a)?'checked':''}> ${escapeHtml(a)}</label>`).join('')}</div></div>
     <div class="field"><label>Observações</label><textarea id="p_obs" placeholder="Ex.: diligência respondida em 10/10, aguardando parecer...">${escapeHtml(p.obs)}</textarea></div>
 
+    <div class="modal-sub">Histórico do Projeto</div>
+    <div class="hint" style="margin:-6px 0 0;">Linha do tempo de acontecimentos, decisões e alterações. Cada registro fica salvo com seu nome, data e horário, e não pode ser apagado.</div>
+    <div class="field">
+      <div style="display:flex;gap:8px;align-items:flex-end;">
+        <textarea id="p_reg_input" rows="2" placeholder="Escreva um novo registro... (Enter registra · Shift+Enter quebra linha)" style="flex:1;min-height:0;"></textarea>
+        <button type="button" class="btn small" id="p_reg_send" style="flex:none;">Registrar</button>
+      </div>
+      <div id="p_reg_list" style="margin-top:10px;max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--white);display:flex;flex-direction:column;gap:8px;"></div>
+    </div>
+
     ${p.historico.length ? `<div class="field"><label>Histórico de status</label><div class="hist">
       ${[...p.historico].reverse().map(h=>`<div><span class="mono muted" style="min-width:78px;">${fmtDate(h.data)}</span>${(()=>{const s=statusById(h.status);return `<span class="badge ${s.cls}">${escapeHtml(s.curto)}</span>`;})()}<span class="muted">${h.por?'por '+escapeHtml(h.por):''}</span></div>`).join('')}
     </div></div>` : ''}
@@ -1403,6 +1414,37 @@ function openProjModal(instId, projId){
       <div>${!isNew?`<button class="btn danger small" id="p_del">Excluir</button>`:''}</div>
       <div style="display:flex;gap:8px;"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="p_save">${isNew?'Cadastrar projeto':'Salvar'}</button></div>
     </div>`);
+
+  // ---- Histórico do Projeto ----
+  const regList = overlay.querySelector('#p_reg_list'), regInput = overlay.querySelector('#p_reg_input');
+  function renderRegistros(){
+    if(!p.registros.length){ regList.innerHTML = `<div class="hint" style="margin:0;">Nenhum registro ainda.</div>`; return; }
+    regList.innerHTML = p.registros.map(r=>{
+      const autor = r.autorId ? membroById(r.autorId) : null;
+      const dt = new Date(r.criadoEm);
+      const quando = isNaN(dt) ? '—' : `${dt.toLocaleDateString('pt-BR')} às ${pad2(dt.getHours())}h${pad2(dt.getMinutes())}`;
+      return `<div style="background:var(--paper-dim);border-radius:8px;padding:7px 10px;display:flex;gap:8px;align-items:flex-start;">
+        <span class="avatar" style="background:${autor?membroColor(autor):'var(--ink)'};color:#2b2f38;">${initials(r.autorNome||'—')}</span>
+        <div style="min-width:0;"><div style="font-size:11.5px;font-weight:700;">${escapeHtml(r.autorNome||'—')} <span style="font-weight:400;color:var(--muted);">— ${quando}</span></div>
+        <div style="font-size:13px;margin-top:2px;white-space:pre-wrap;word-break:break-word;">${linkifyText(r.texto)}</div></div></div>`;
+    }).join('');
+    regList.scrollTop = regList.scrollHeight;
+  }
+  renderRegistros();
+  const registrar = ()=>{
+    const texto = regInput.value.trim();
+    if(!texto) return;
+    const reg = {id:uid(), autorId: me?me.id:null, autorNome: me ? me.nome : (session?session.nome:'—'), texto, criadoEm:new Date().toISOString()};
+    p.registros.push(reg);
+    // Projeto já existente: o registro é gravado na hora, mesmo que a janela seja fechada sem "Salvar".
+    if(!isNew){ orig.registros = orig.registros || []; orig.registros.push({...reg}); scheduleSave(); }
+    regInput.value = '';
+    renderRegistros();
+    if(!isNew) render();
+    toast(isNew ? 'Registro incluído — será salvo ao cadastrar o projeto.' : 'Registro salvo no histórico.');
+  };
+  overlay.querySelector('#p_reg_send').onclick = registrar;
+  regInput.onkeydown = e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); registrar(); } };
 
   const origemSel = overlay.querySelector('#p_origem');
   const fillOrigem = sel=>{

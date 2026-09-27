@@ -132,8 +132,8 @@
   .cert-cell:hover{background:var(--paper-dim);}
   .cert-cell .cn{font-size:13px;font-weight:600;margin-bottom:5px;}
   .cert-cell .cd{font-size:11.5px;color:var(--muted);font-family:var(--font-mono);display:flex;justify-content:space-between;gap:8px;}
-  .cert-cell .foot{display:flex;justify-content:space-between;align-items:center;margin-top:6px;}
-  .file-link{font-size:11.5px;font-weight:600;color:var(--teal);text-decoration:none;border:1px solid var(--teal-soft);background:var(--teal-soft);padding:2px 8px;border-radius:20px;}
+  .cert-cell .foot{display:flex;justify-content:space-between;align-items:center;margin-top:6px;gap:6px;flex-wrap:wrap;}
+  .file-link{white-space:nowrap;font-size:11.5px;font-weight:600;color:var(--teal);text-decoration:none;border:1px solid var(--teal-soft);background:var(--teal-soft);padding:2px 8px;border-radius:20px;}
   .file-link:hover{border-color:var(--teal);}
   .badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;font-family:var(--font-mono);white-space:nowrap;}
   .badge.ok{background:var(--ok-soft);color:var(--ok);}
@@ -299,7 +299,7 @@ function defaultState(){
       'Certidão Dívida Ativa da União','Certidão Dívida Ativa Estadual','Certidão Débitos Municipais',
       'Certidão FGTS','Certidão Trabalhista (CNDT)','Certidão CEPIM','Certidão do TCE',
       'COMTIBA','CMAS','CMDCA','Ata de Eleição'
-    ].map(nome=>({id:uid(), nome, notificarApenasNoDia:false})),
+    ].map(nome=>({id:uid(), nome, notificarApenasNoDia:false, siteEmissao: siteConhecido(nome)})),
     tiposTarefa: ['Contrato','Cotação','Pagamento','Documentação','Certidão','Prestação de Contas','Alteração de projeto','Outro'],
     origensProjeto: ['Prefeitura','Governo Estadual','Governo Federal','ONU / Organismo internacional','Fundação / Iniciativa privada','Outro'],
     certidoes: [],
@@ -484,7 +484,12 @@ function normalizeState(saved){
   });
   s.instituicoes.forEach(normalizeInst);
   s.certidoes.forEach(c=>{ if(typeof c.link !== 'string') c.link = ''; });
-  s.certidaoTipos.forEach(ct=>{ if(typeof ct.notificarApenasNoDia !== 'boolean') ct.notificarApenasNoDia = false; });
+  s.certidaoTipos.forEach(ct=>{
+    if(typeof ct.notificarApenasNoDia !== 'boolean') ct.notificarApenasNoDia = false;
+    // Primeira vez: sugere o site oficial conhecido. Depois disso, vale o que a equipe cadastrar (inclusive vazio).
+    if(typeof ct.siteEmissao !== 'string') ct.siteEmissao = siteConhecido(ct.nome);
+  });
+  s.certidoes.forEach(c=>{ if(typeof c.siteEmissao !== 'string') c.siteEmissao = ''; });
   s.links.forEach(l=>{
     ['titulo','url','categoria','usuario','senha','obs','instituicaoId','projetoId'].forEach(k=>{ if(typeof l[k] !== 'string') l[k] = ''; });
   });
@@ -1757,6 +1762,37 @@ function openInstModal(instId){
 }
 
 /* ================== CERTIDÕES ================== */
+// Sites oficiais de emissão (mesmos já usados na Central de Links do gestor original).
+const SITES_CERTIDAO = [
+  [/divida ativa da uniao|receita federal|pgfn/, 'https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cnpj'],
+  [/divida ativa estadual|estadual/,             'https://cdwfazenda.paas.pr.gov.br/cdwportal/certidao/automatica'],
+  [/fgts|crf/,                                   'https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf'],
+  [/trabalhista|cndt/,                           'https://cndt-certidao.tst.jus.br/inicio.faces'],
+  [/cepim/,                                      'https://certidoes.cgu.gov.br/'],
+  [/tce/,                                        'https://www.tce.pr.gov.br/para-o-fiscalizado/servicos/certidoes/certidao-liberatoria/']
+];
+// Certidão municipal: o site depende da cidade da instituição.
+const SITES_MUNICIPAIS = {
+  'curitiba': 'https://cnd-cidadao.curitiba.pr.gov.br/',
+  'colombo': 'https://colombo.atende.net/autoatendimento/servicos/certidao-negativa-de-debitos/detalhar/1',
+  'sao jose dos pinhais': 'https://financas.sjp.pr.gov.br/socioEconomicoGateway/#/certidao'
+};
+function siteConhecido(nomeTipo){
+  const n = normalizeStr(nomeTipo);
+  const hit = SITES_CERTIDAO.find(([re])=>re.test(n));
+  return hit ? hit[1] : '';
+}
+function isMunicipal(tipo){ return /municip/.test(normalizeStr(tipo.nome)); }
+// Qual site abrir para emitir: 1) o específico da instituição; 2) o da cidade (certidão municipal); 3) o padrão do tipo.
+function siteEmissao(inst, tipo, cert){
+  if(cert && cert.siteEmissao) return {url:cert.siteEmissao, origem:'específico desta instituição'};
+  if(isMunicipal(tipo) && inst && inst.end){
+    const u = SITES_MUNICIPAIS[normalizeStr(inst.end.cidade)];
+    if(u) return {url:u, origem:`prefeitura de ${inst.end.cidade}`};
+  }
+  if(tipo.siteEmissao) return {url:tipo.siteEmissao, origem:'padrão do tipo de certidão'};
+  return null;
+}
 function renderCertidoes(c){
   const filterBar = document.createElement('div');
   filterBar.className='filters';
@@ -1812,6 +1848,7 @@ function renderCertidoes(c){
         else if(du<=30){ bc='warn'; bt=`vence em ${du}d`; }
         else { bc='ok'; bt='em dia'; }
       }
+      const site = siteEmissao(inst, tipo, cert);
       const cell = document.createElement('div');
       cell.className='cert-cell';
       cell.innerHTML = `
@@ -1819,9 +1856,11 @@ function renderCertidoes(c){
         <div class="cd"><span>Últ. renovação</span><span>${cert?fmtDate(cert.ultimaRenovacao):'—'}</span></div>
         <div class="cd"><span>Próx. vencimento</span><span>${cert?fmtDate(cert.proximoVencimento):'—'}</span></div>
         <div class="foot"><span class="badge ${bc}">${bt}</span>
-          ${cert && cert.link ? `<a class="file-link" href="${escapeAttr(cert.link)}" target="_blank" rel="noopener" title="Abrir o arquivo da certidão">📄 abrir</a>` : ''}</div>`;
-      const a = cell.querySelector('a');
-      if(a) a.onclick = e=>e.stopPropagation();
+          <span style="display:flex;gap:4px;">
+          ${site ? `<a class="file-link" href="${escapeAttr(site.url)}" target="_blank" rel="noopener noreferrer" title="Abrir o site de emissão (${escapeAttr(site.origem)})">🌐 emitir</a>` : ''}
+          ${cert && cert.link ? `<a class="file-link" href="${escapeAttr(cert.link)}" target="_blank" rel="noopener noreferrer" title="Abrir o arquivo da certidão">📄 abrir</a>` : ''}
+          </span></div>`;
+      cell.querySelectorAll('a').forEach(a=>a.onclick = e=>e.stopPropagation());
       cell.onclick = ()=>openCertModal(inst.id, tipo.id);
       grid.appendChild(cell);
     });
@@ -1833,40 +1872,75 @@ function renderCertidoes(c){
 function openCertModal(instId, tipoId){
   let cert = state.certidoes.find(x=>x.instituicaoId===instId && x.tipoId===tipoId);
   const isNew = !cert;
-  if(isNew) cert = {id:uid(), instituicaoId:instId, tipoId, ultimaRenovacao:'', proximoVencimento:'', link:''};
+  if(isNew) cert = {id:uid(), instituicaoId:instId, tipoId, ultimaRenovacao:'', proximoVencimento:'', link:'', siteEmissao:''};
   const inst = instById(instId);
   const tipo = state.certidaoTipos.find(t=>t.id===tipoId);
   if(!inst || !tipo) return;
+  const site = siteEmissao(inst, tipo, cert);
+  const padrao = siteEmissao(inst, tipo, null); // o que vale se não houver site específico
+  const du = daysUntil(cert.proximoVencimento);
+  let status = '<span class="badge none">sem data</span>';
+  if(du!==null) status = du<0 ? `<span class="badge bad">vencida há ${Math.abs(du)}d</span>` : du<=30 ? `<span class="badge warn">vence em ${du}d</span>` : '<span class="badge ok">em dia</span>';
+
   const overlay = makeModal(escapeHtml(tipo.nome), `
-    <div class="hint" style="margin:-8px 0 0;">${escapeHtml(inst.nome)}${inst.sigla?` (${escapeHtml(inst.sigla)})`:''}</div>
+    <div class="hint" style="margin:-8px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span>${escapeHtml(inst.nome)}${inst.sigla?` (${escapeHtml(inst.sigla)})`:''}</span>
+      ${inst.cnpj?`<button type="button" class="icon-btn mono small" id="c_cnpj" title="Copiar CNPJ">📋 ${escapeHtml(inst.cnpj)}</button>`:''}
+      ${status}
+    </div>
+
+    <div class="modal-sub">1. Emitir</div>
+    ${site
+      ? `<a class="btn" id="c_emitir" href="${escapeAttr(site.url)}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;justify-content:center;">🌐 Abrir site de emissão</a>
+         <div class="hint" style="margin:-6px 0 0;word-break:break-all;">${escapeHtml(site.url)} <span class="muted">— ${escapeHtml(site.origem)}</span></div>`
+      : `<div class="note" style="margin:0;">Nenhum site de emissão cadastrado para esta certidão. Cadastre o padrão em <b>Configurações → Tipos de certidão</b> ou um específico abaixo.</div>`}
+    <details ${cert.siteEmissao?'open':''} style="font-size:13px;">
+      <summary style="cursor:pointer;color:var(--muted);">Usar um site diferente para esta instituição</summary>
+      <div class="field" style="margin-top:8px;">
+        <input id="c_site" value="${escapeAttr(cert.siteEmissao||'')}" placeholder="https://... (deixe vazio para usar o padrão)">
+        <div class="hint" style="margin:4px 0 0;">Padrão: ${padrao?escapeHtml(padrao.url):'nenhum'}</div>
+      </div>
+    </details>
+
+    <div class="modal-sub">2. Registrar a certidão</div>
     <div class="field-row">
-      <div class="field"><label>Última renovação</label><input id="c_ult" type="date" value="${cert.ultimaRenovacao||''}"></div>
+      <div class="field"><label>Última renovação</label>
+        <div style="display:flex;gap:6px;"><input id="c_ult" type="date" value="${cert.ultimaRenovacao||''}" style="flex:1;min-width:0;">
+        <button type="button" class="btn ghost small" id="c_hoje" style="flex:none;" title="Preencher com a data de hoje">Hoje</button></div></div>
       <div class="field"><label>Próximo vencimento</label><input id="c_prox" type="date" value="${cert.proximoVencimento||''}"></div>
     </div>
     <div class="field"><label>Link do arquivo da certidão</label>
       <div style="display:flex;gap:6px;">
         <input id="c_link" value="${escapeAttr(cert.link||'')}" placeholder="https://... (link do PDF no Drive / SharePoint)" style="flex:1;min-width:0;">
-        ${cert.link?`<a class="btn ghost small" href="${escapeAttr(cert.link)}" target="_blank" rel="noopener" style="flex:none;text-decoration:none;">Abrir</a>`:''}
+        ${cert.link?`<a class="btn ghost small" href="${escapeAttr(cert.link)}" target="_blank" rel="noopener noreferrer" style="flex:none;text-decoration:none;">📄 Abrir</a>`:''}
       </div>
       <div class="hint" style="margin:4px 0 0;">Cole o link de compartilhamento do arquivo. Assim ele abre direto daqui, sem procurar nas pastas.</div>
     </div>
     <div class="modal-actions">
       <div>${!isNew?`<button class="btn danger small" id="c_del">Limpar registro</button>`:''}</div>
       <div style="display:flex;gap:8px;"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="c_save">Salvar</button></div>
-    </div>`, 460);
+    </div>`, 520);
+  const q = s=>overlay.querySelector(s);
+  if(q('#c_cnpj')) q('#c_cnpj').onclick = ()=>copyText(inst.cnpj, 'CNPJ copiado!');
+  q('#c_hoje').onclick = ()=>{ q('#c_ult').value = todayStr(); };
   if(!isNew){
-    overlay.querySelector('#c_del').onclick = ()=>{
+    q('#c_del').onclick = ()=>{
       if(!confirm('Apagar as datas e o link desta certidão?')) return;
       state.certidoes = state.certidoes.filter(x=>x.id!==cert.id);
       scheduleSave(); overlay.remove(); render(); toast('Registro removido.');
     };
   }
-  overlay.querySelector('#c_save').onclick = ()=>{
-    const link = overlay.querySelector('#c_link').value.trim();
-    if(link && !isUrl(link)){ toast('O link precisa começar com http:// ou https://'); return; }
-    cert.ultimaRenovacao = overlay.querySelector('#c_ult').value;
-    cert.proximoVencimento = overlay.querySelector('#c_prox').value;
+  q('#c_save').onclick = ()=>{
+    const link = q('#c_link').value.trim();
+    const siteEsp = q('#c_site').value.trim();
+    if(link && !isUrl(link)){ toast('O link do arquivo precisa começar com http:// ou https://'); return; }
+    if(siteEsp && !isUrl(siteEsp)){ toast('O site de emissão precisa começar com http:// ou https://'); return; }
+    const ult = q('#c_ult').value, prox = q('#c_prox').value;
+    if(ult && prox && prox < ult){ toast('O vencimento está antes da renovação.'); return; }
+    cert.ultimaRenovacao = ult;
+    cert.proximoVencimento = prox;
     cert.link = link;
+    cert.siteEmissao = siteEsp;
     if(isNew) state.certidoes.push(cert);
     scheduleSave(); overlay.remove(); render(); toast('Certidão atualizada.');
   };
@@ -2163,15 +2237,22 @@ function renderConfig(c){
 
   // Tipos de certidão
   const s1 = document.createElement('div'); s1.className='cfg-section';
-  s1.innerHTML = `<h3>Tipos de certidão</h3><div class="hint">A lista de certidões acompanhadas em todas as instituições. Os tipos ficam só aqui — não aparecem como projetos. Marque "só no dia" para a certidão que não precisa do aviso de 7 dias antes (ex.: FGTS, que só se renova perto do vencimento).</div>`;
+  s1.innerHTML = `<h3>Tipos de certidão</h3><div class="hint">A lista de certidões acompanhadas em todas as instituições. Os tipos ficam só aqui — não aparecem como projetos. <b>Site de emissão</b>: o endereço que abre no botão "🌐 emitir" (cada instituição pode ter um site próprio, definido na própria certidão; a municipal usa a cidade da instituição quando é Curitiba, Colombo ou São José dos Pinhais). Marque "só no dia" para a certidão que não precisa do aviso de 7 dias antes.</div>`;
   const l1 = document.createElement('div'); l1.className='cfg-list';
   state.certidaoTipos.forEach(tipo=>{
     const row = document.createElement('div'); row.className='cfg-row';
-    row.innerHTML = `<input value="${escapeAttr(tipo.nome)}" class="tNome">
+    row.style.flexWrap = 'wrap';
+    row.innerHTML = `<input value="${escapeAttr(tipo.nome)}" class="tNome" style="flex:1 1 200px;">
+      <input value="${escapeAttr(tipo.siteEmissao||'')}" class="tSite" placeholder="🌐 Site de emissão (https://...)" style="flex:2 1 260px;font-size:12.5px;color:var(--teal);">
       <label class="small muted" style="display:flex;align-items:center;gap:5px;white-space:nowrap;" title="Aviso de WhatsApp só no dia do vencimento (sem o aviso de 7 dias antes)"><input type="checkbox" class="tDia" ${tipo.notificarApenasNoDia?'checked':''} style="flex:none;width:auto;"> só no dia</label>
       <button class="icon-btn del" title="Remover">✕</button>`;
     row.querySelector('.tNome').oninput = e=>{ tipo.nome = e.target.value; scheduleSave(); };
     row.querySelector('.tDia').onchange = e=>{ tipo.notificarApenasNoDia = e.target.checked; scheduleSave(); };
+    row.querySelector('.tSite').onchange = e=>{
+      const v = e.target.value.trim();
+      if(v && !isUrl(v)){ toast('O site precisa começar com http:// ou https://'); e.target.value = tipo.siteEmissao||''; return; }
+      tipo.siteEmissao = v; scheduleSave();
+    };
     row.querySelector('.del').onclick = ()=>{
       if(!confirm(`Remover "${tipo.nome}" de todas as instituições? As datas e links já registrados desse tipo serão apagados.`)) return;
       state.certidaoTipos = state.certidaoTipos.filter(t=>t.id!==tipo.id);
@@ -2183,7 +2264,7 @@ function renderConfig(c){
   s1.appendChild(l1);
   const add1 = document.createElement('button');
   add1.className='btn ghost small'; add1.style.marginTop='10px'; add1.textContent='+ Adicionar tipo de certidão';
-  add1.onclick = ()=>{ state.certidaoTipos.push({id:uid(), nome:'Nova certidão', notificarApenasNoDia:false}); scheduleSave(); render(); };
+  add1.onclick = ()=>{ state.certidaoTipos.push({id:uid(), nome:'Nova certidão', notificarApenasNoDia:false, siteEmissao:''}); scheduleSave(); render(); };
   s1.appendChild(add1);
   wrap.appendChild(s1);
 

@@ -567,6 +567,15 @@ function currentMembro(){
   if(!session || !state) return null;
   return state.membros.find(m=>normalizeStr(m.nome)===normalizeStr(session.nome)) || null;
 }
+// Usuário logado como membro da equipe; se ainda não existir (ex.: nome alterado), é criado agora.
+function ensureCurrentMembro(){
+  let m = currentMembro();
+  if(!m && session){
+    m = {id:uid(), nome:session.nome, whatsapp:'', callmebotApiKey:'', cor: USER_PALETTE[state.membros.length % USER_PALETTE.length]};
+    state.membros.push(m); scheduleSave();
+  }
+  return m;
+}
 function membroColor(m){ return (m && m.cor) ? m.cor : '#eae5d8'; }
 function avatarBadge(m){
   if(!m) return '';
@@ -954,7 +963,7 @@ function renderCard(t){
 function openTaskModal(taskId){
   if(state.instituicoes.length===0){ toast('Cadastre pelo menos uma instituição antes (aba Instituições).'); return; }
   const isNew = !taskId;
-  const me = currentMembro();
+  const me = isNew ? ensureCurrentMembro() : currentMembro();
   const t = isNew ? {
     id: uid(), titulo:'', tipo: state.tiposTarefa[0],
     instituicaoId: filters.inst || state.instituicoes[0].id, projetoId: filters.proj || '',
@@ -994,9 +1003,9 @@ function openTaskModal(taskId){
       <div class="field"><label>Projeto</label><select id="f_proj"></select></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Solicitado por</label>
-        <select id="f_solic" ${isNew?'disabled':''}><option value="">—</option>${state.membros.map(m=>`<option value="${m.id}" ${t.solicitanteId===m.id?'selected':''}>${escapeHtml(m.nome)}</option>`).join('')}</select>
-        ${isNew?`<div class="hint" style="margin:4px 0 0;">Preenchido com seu usuário.</div>`:''}</div>
+      <div class="field"><label>Solicitado por 🔒</label>
+        ${(()=>{ const s = membroById(t.solicitanteId); return `<div id="f_solic" style="display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:var(--paper-dim);min-height:38px;cursor:not-allowed;" title="Definido automaticamente — não pode ser alterado">${s?avatarBadge(s)+`<span>${escapeHtml(s.nome)}</span>`:'<span class="muted">—</span>'}</div>`; })()}
+        <div class="hint" style="margin:4px 0 0;">${isNew?'Preenchido automaticamente com o usuário logado.':'Quem criou a tarefa. Não pode ser alterado.'}</div></div>
       <div class="field"><label>Responsável por executar</label>
         <select id="f_resp"><option value="">—</option>${state.membros.map(m=>`<option value="${m.id}" ${t.responsavelId===m.id?'selected':''}>${escapeHtml(m.nome)}</option>`).join('')}</select></div>
     </div>
@@ -1145,14 +1154,15 @@ function openTaskModal(taskId){
     const titulo = overlay.querySelector('#f_titulo').value.trim();
     const tipoVal = overlay.querySelector('#f_tipo').value;
     const prazo = overlay.querySelector('#f_prazo').value;
-    const solicVal = overlay.querySelector('#f_solic').value;
+    // Solicitante: na criação é sempre o usuário logado; na edição, mantém o original. Não vem da tela.
+    const solicVal = isNew ? (me ? me.id : '') : t.solicitanteId;
     const respVal = overlay.querySelector('#f_resp').value;
     const faltando = [];
     if(!titulo) faltando.push('Título');
     if(!tipoVal) faltando.push('Tipo');
     if(!prazo) faltando.push('Prazo');
     if(!instSel.value) faltando.push('Instituição');
-    if(!solicVal) faltando.push('Solicitado por');
+    if(!solicVal && isNew) faltando.push('Solicitado por (usuário logado não identificado — saia e entre de novo)');
     if(!respVal) faltando.push('Responsável');
     if(faltando.length){ toast('Preencha: ' + faltando.join(', ')); return; }
 

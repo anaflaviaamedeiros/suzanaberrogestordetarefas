@@ -141,6 +141,10 @@
   .badge.bad{background:var(--bad-soft);color:var(--bad);}
   .badge.info{background:var(--teal-soft);color:var(--teal);}
   .badge.none, .badge.done{background:var(--paper-dim);color:var(--muted);}
+  .badge.na{background:transparent;color:var(--muted);border:1px dashed var(--line);}
+  .cert-cell.na{opacity:.6;}
+  .cert-cell.na .cn{text-decoration:line-through;text-decoration-color:var(--line);}
+  .regra-tag{font-size:10.5px;color:var(--muted);margin:-2px 0 5px;}
 
   /* Instituições */
   .inst-body{display:grid;grid-template-columns:repeat(3,1fr);}
@@ -299,13 +303,14 @@ function defaultState(){
       'Certidão Dívida Ativa da União','Certidão Dívida Ativa Estadual','Certidão Débitos Municipais',
       'Certidão FGTS','Certidão Trabalhista (CNDT)','Certidão CEPIM','Certidão do TCE',
       'COMTIBA','CMAS','CMDCA','Ata de Eleição'
-    ].map(nome=>({id:uid(), nome, notificarApenasNoDia:false, siteEmissao: siteConhecido(nome)})),
+    ].map(nome=>({id:uid(), nome, notificarApenasNoDia:false, siteEmissao: siteConhecido(nome), categoria: categoriaPadrao(nome), regraNotif: categoriaPadrao(nome)==='certidao'?'dia':'4meses'})),
     tiposTarefa: ['Contrato','Cotação','Pagamento','Documentação','Certidão','Prestação de Contas','Alteração de projeto','Outro'],
     origensProjeto: ['Prefeitura','Governo Estadual','Governo Federal','ONU / Organismo internacional','Fundação / Iniciativa privada','Outro'],
     certidoes: [],
     links: [],
     tarefas: [],
-    notifCertidaoMembroId: null
+    notifCertidaoMembroId: null,
+    notifInstitucionalMembroId: null
   };
 }
 
@@ -494,7 +499,11 @@ function normalizeState(saved){
     if(typeof ct.notificarApenasNoDia !== 'boolean') ct.notificarApenasNoDia = false;
     // Primeira vez: sugere o site oficial conhecido. Depois disso, vale o que a equipe cadastrar (inclusive vazio).
     if(typeof ct.siteEmissao !== 'string') ct.siteEmissao = siteConhecido(ct.nome);
+    // Categoria e regra de aviso: definidas uma vez pelo nome ("Certidão..." = convencional); depois vale o que a equipe escolher.
+    if(ct.categoria!=='certidao' && ct.categoria!=='institucional') ct.categoria = categoriaPadrao(ct.nome);
+    if(!REGRAS_NOTIF.some(r=>r[0]===ct.regraNotif)) ct.regraNotif = ct.categoria==='certidao' ? 'dia' : '4meses';
   });
+  s.certidoes.forEach(c=>{ c.naoAplica = !!c.naoAplica; });
   s.certidoes.forEach(c=>{ if(typeof c.siteEmissao !== 'string') c.siteEmissao = ''; });
   s.links.forEach(l=>{
     ['titulo','url','categoria','usuario','senha','obs','instituicaoId','projetoId'].forEach(k=>{ if(typeof l[k] !== 'string') l[k] = ''; });
@@ -506,6 +515,8 @@ function normalizeState(saved){
     if(typeof t.projetoId !== 'string') t.projetoId = '';
   });
   if(typeof s.notifCertidaoMembroId === 'undefined') s.notifCertidaoMembroId = null;
+  // Responsável pelos documentos institucionais: começa igual ao das certidões (ninguém fica sem aviso na troca de versão).
+  if(!saved || !('notifInstitucionalMembroId' in saved)) s.notifInstitucionalMembroId = s.notifCertidaoMembroId;
   return s;
 }
 
@@ -726,10 +737,9 @@ function computeCertList(kind){
     if(inst.excluirIndicadores) continue;
     for(const tipo of state.certidaoTipos){
       const c = state.certidoes.find(x=>x.instituicaoId===inst.id && x.tipoId===tipo.id);
-      const du = c ? daysUntil(c.proximoVencimento) : null;
-      if(du===null) continue;
-      if(kind==='vencidas' && du<0) out.push({inst, tipo, cert:c, dias:du});
-      else if(kind==='vencendo' && du>=0 && du<=30) out.push({inst, tipo, cert:c, dias:du});
+      const st = certStatus(tipo, c); // "não se aplica" e "sem data" nunca entram aqui
+      if(kind==='vencidas' && st.k==='vencida') out.push({inst, tipo, cert:c, dias:st.dias});
+      else if(kind==='vencendo' && st.k==='alerta') out.push({inst, tipo, cert:c, dias:st.dias});
     }
   }
   return out.sort((a,b)=>a.dias-b.dias);
@@ -738,13 +748,13 @@ function countCertAlerts(){ return computeCertList('vencidas').length + computeC
 
 function openCertListModal(kind){
   const items = computeCertList(kind);
-  const title = kind==='vencidas' ? 'Certidões vencidas' : 'Certidões vencendo em 30 dias';
+  const title = kind==='vencidas' ? 'Certidões e documentos vencidos' : 'Próximos do vencimento (dentro do prazo de aviso)';
   const overlay = makeModal(title, items.length===0 ? `<div class="hint" style="margin:0;">Nenhum registro nessa condição.</div>` : `
     <div class="tbl-wrap" style="max-height:60vh;overflow-y:auto;">
-      <table class="tbl"><thead><tr><th>Instituição</th><th>Certidão</th><th>Vencimento</th><th>${kind==='vencidas'?'Dias em atraso':'Dias restantes'}</th></tr></thead>
+      <table class="tbl"><thead><tr><th>Instituição</th><th>Documento</th><th>Regra</th><th>Vencimento</th><th>${kind==='vencidas'?'Dias em atraso':'Dias restantes'}</th></tr></thead>
       <tbody>${items.map(it=>`
         <tr class="click" data-inst="${it.inst.id}" data-tipo="${it.tipo.id}">
-          <td>${escapeHtml(instLabel(it.inst))}</td><td>${escapeHtml(it.tipo.nome)}</td>
+          <td>${escapeHtml(instLabel(it.inst))}</td><td>${escapeHtml(it.tipo.nome)}</td><td class="small muted">${it.tipo.regraNotif==='4meses'?'4 meses':it.tipo.regraNotif==='nenhuma'?'sem aviso':'no dia'}</td>
           <td class="mono">${fmtDate(it.cert.proximoVencimento)}</td>
           <td class="mono" style="color:${kind==='vencidas'?'var(--bad)':'var(--warn)'};">${Math.abs(it.dias)}</td>
         </tr>`).join('')}</tbody></table>
@@ -765,7 +775,7 @@ function renderBanner(){
     <div class="cell ${atrasadas?'bad':''}"><div class="num">${atrasadas}</div><div class="lbl">Tarefas atrasadas</div></div>
     <div class="cell click ${acomp?'warn':''}" id="cellAcomp" title="Projetos em tramitação ou em alteração de plano"><div class="num">${acomp}</div><div class="lbl">Projetos em acompanhamento</div></div>
     <div class="cell click ${vencidas?'bad':''}" id="cellVencidas"><div class="num">${vencidas}</div><div class="lbl">Certidões vencidas</div></div>
-    <div class="cell click ${vencendo?'warn':''}" id="cellVencendo"><div class="num">${vencendo}</div><div class="lbl">Vencendo em 30 dias</div></div>
+    <div class="cell click ${vencendo?'warn':''}" id="cellVencendo"><div class="num">${vencendo}</div><div class="lbl">Próximos do vencimento</div></div>
   `;
   b.querySelector('#cellAcomp').onclick = ()=>{ projFilters = {inst:'', status:'acomp', origem:'', busca:'', finalizados:false}; activeTab='projetos'; render(); };
   b.querySelector('#cellVencidas').onclick = ()=>openCertListModal('vencidas');
@@ -1860,6 +1870,35 @@ function openInstModal(instId){
 }
 
 /* ================== CERTIDÕES ================== */
+// ---- Regras de vencimento ----
+const REGRAS_NOTIF = [
+  ['dia',     'Notificar somente no dia do vencimento'],
+  ['4meses',  'Notificar com 4 meses de antecedência'],
+  ['nenhuma', 'Não gerar notificação de vencimento']
+];
+const CATEGORIAS_DOC = [['certidao','Certidão convencional'],['institucional','Documento institucional']];
+function categoriaPadrao(nome){ return /certid/.test(normalizeStr(nome)) ? 'certidao' : 'institucional'; }
+function regraLabel(id){ const r = REGRAS_NOTIF.find(x=>x[0]===id); return r ? r[1] : '—'; }
+// Início da janela de alerta (aaaa-mm-dd).
+// 4 meses: 1º dia do mês, 4 meses antes do vencimento (vence 30/09/2027 → alerta a partir de 01/05/2027).
+// Demais regras: 30 dias antes (mesma janela que o sistema já usava nos indicadores).
+function inicioAlerta(tipo, venc){
+  const d = new Date(String(venc).slice(0,10)+'T00:00:00');
+  if(isNaN(d)) return null;
+  if(tipo.regraNotif==='4meses'){ const i = new Date(d.getFullYear(), d.getMonth()-4, 1); return `${i.getFullYear()}-${pad2(i.getMonth()+1)}-01`; }
+  d.setDate(d.getDate()-30);
+  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+}
+// Situação de um documento numa instituição: na | semdata | vencida | alerta | ok
+function certStatus(tipo, cert){
+  if(cert && cert.naoAplica) return {k:'na', label:'não se aplica', cls:'na'};
+  const du = cert ? daysUntil(cert.proximoVencimento) : null;
+  if(du===null) return {k:'semdata', label:'sem data', cls:'none'};
+  if(du<0) return {k:'vencida', dias:du, label:`vencida há ${Math.abs(du)}d`, cls:'bad'};
+  const ini = inicioAlerta(tipo, cert.proximoVencimento);
+  if(ini && todayStr() >= ini) return {k:'alerta', dias:du, label: du===0 ? 'vence hoje' : `vence em ${du}d`, cls:'warn', desde:ini};
+  return {k:'ok', dias:du, label:'em dia', cls:'ok', desde:ini};
+}
 // Sites oficiais de emissão (mesmos já usados na Central de Links do gestor original).
 const SITES_CERTIDAO = [
   [/divida ativa da uniao|receita federal|pgfn/, 'https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cnpj'],
@@ -1914,11 +1953,11 @@ function renderCertidoes(c){
     return;
   }
   insts.forEach(inst=>{
-    let ok=0,warn=0,bad=0;
+    let ok=0,warn=0,bad=0,na=0;
     state.certidaoTipos.forEach(tipo=>{
       const cert = state.certidoes.find(x=>x.instituicaoId===inst.id && x.tipoId===tipo.id);
-      const du = cert ? daysUntil(cert.proximoVencimento) : null;
-      if(du===null || du<0) bad++; else if(du<=30) warn++; else ok++;
+      const k = certStatus(tipo, cert).k;
+      if(k==='na') na++; else if(k==='vencida' || k==='semdata') bad++; else if(k==='alerta') warn++; else ok++;
     });
     const block = document.createElement('div');
     block.className='inst-block';
@@ -1931,6 +1970,7 @@ function renderCertidoes(c){
           ${ok?`<span style="color:var(--ok)">${ok} em dia</span>`:''}
           ${warn?`<span style="color:var(--warn)">${warn} vencendo</span>`:''}
           ${bad?`<span style="color:var(--bad)">${bad} vencidas/sem data</span>`:''}
+          ${na?`<span style="color:var(--muted)">${na} não se aplica${na>1?'m':''}</span>`:''}
         </div>
       </div>`;
     const cp = block.querySelector('.cpCnpj');
@@ -1939,18 +1979,14 @@ function renderCertidoes(c){
     grid.className='cert-grid';
     state.certidaoTipos.forEach(tipo=>{
       const cert = state.certidoes.find(x=>x.instituicaoId===inst.id && x.tipoId===tipo.id);
-      const du = cert ? daysUntil(cert.proximoVencimento) : null;
-      let bc='none', bt='sem data';
-      if(du!==null){
-        if(du<0){ bc='bad'; bt=`vencida há ${Math.abs(du)}d`; }
-        else if(du<=30){ bc='warn'; bt=`vence em ${du}d`; }
-        else { bc='ok'; bt='em dia'; }
-      }
-      const site = siteEmissao(inst, tipo, cert);
+      const st = certStatus(tipo, cert);
+      const bc = st.cls, bt = st.label;
+      const site = st.k==='na' ? null : siteEmissao(inst, tipo, cert);
       const cell = document.createElement('div');
-      cell.className='cert-cell';
+      cell.className='cert-cell' + (st.k==='na' ? ' na' : '');
       cell.innerHTML = `
         <div class="cn">${escapeHtml(tipo.nome)}</div>
+        ${tipo.regraNotif==='4meses' ? '<div class="regra-tag">⏰ aviso 4 meses antes</div>' : tipo.regraNotif==='nenhuma' ? '<div class="regra-tag">🔕 sem aviso</div>' : ''}
         <div class="cd"><span>Últ. renovação</span><span>${cert?fmtDate(cert.ultimaRenovacao):'—'}</span></div>
         <div class="cd"><span>Próx. vencimento</span><span>${cert?fmtDate(cert.proximoVencimento):'—'}</span></div>
         <div class="foot"><span class="badge ${bc}">${bt}</span>
@@ -1967,6 +2003,33 @@ function renderCertidoes(c){
   });
 }
 
+function openNovoTipoDocModal(){
+  const overlay = makeModal('Novo tipo de certidão / documento', `
+    <div class="field"><label>Nome</label><input id="nt_nome" placeholder="Ex.: Certidão de Regularidade ou Registro no CMDCA"></div>
+    <div class="field"><label>Categoria</label><select id="nt_cat">${CATEGORIAS_DOC.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></div>
+    <div class="field"><label>Regra de notificação de vencimento</label><select id="nt_regra"><option value="">— Selecione —</option>${REGRAS_NOTIF.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></div>
+    <div class="field"><label>Site de emissão — opcional</label><input id="nt_site" placeholder="https://..."></div>
+    <div class="modal-actions" style="justify-content:flex-end;"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="nt_save">Adicionar</button></div>`, 440);
+  const q = s=>overlay.querySelector(s);
+  q('#nt_nome').focus();
+  q('#nt_nome').oninput = e=>{ // sugere categoria e regra pelo nome; a pessoa pode trocar
+    const cat = categoriaPadrao(e.target.value);
+    q('#nt_cat').value = cat;
+    if(!q('#nt_regra').dataset.touched) q('#nt_regra').value = cat==='certidao' ? 'dia' : '4meses';
+  };
+  q('#nt_regra').onchange = e=>{ e.target.dataset.touched = '1'; };
+  q('#nt_save').onclick = ()=>{
+    const nome = q('#nt_nome').value.trim().replace(/\s+/g,' ');
+    const regra = q('#nt_regra').value, site = q('#nt_site').value.trim();
+    if(!nome){ toast('Informe o nome.'); return; }
+    if(!regra){ toast('Selecione a regra de notificação.'); return; }
+    if(state.certidaoTipos.some(t=>normalizeStr(t.nome)===normalizeStr(nome))){ toast('Já existe um tipo com esse nome.'); return; }
+    if(site && !isUrl(site)){ toast('O site precisa começar com http:// ou https://'); return; }
+    state.certidaoTipos.push({id:uid(), nome, notificarApenasNoDia:false, siteEmissao: site || siteConhecido(nome), categoria: q('#nt_cat').value, regraNotif: regra});
+    scheduleSave(); overlay.remove(); render(); toast('Tipo adicionado.');
+  };
+}
+
 function openCertModal(instId, tipoId){
   let cert = state.certidoes.find(x=>x.instituicaoId===instId && x.tipoId===tipoId);
   const isNew = !cert;
@@ -1976,9 +2039,11 @@ function openCertModal(instId, tipoId){
   if(!inst || !tipo) return;
   const site = siteEmissao(inst, tipo, cert);
   const padrao = siteEmissao(inst, tipo, null); // o que vale se não houver site específico
-  const du = daysUntil(cert.proximoVencimento);
-  let status = '<span class="badge none">sem data</span>';
-  if(du!==null) status = du<0 ? `<span class="badge bad">vencida há ${Math.abs(du)}d</span>` : du<=30 ? `<span class="badge warn">vence em ${du}d</span>` : '<span class="badge ok">em dia</span>';
+  const st0 = certStatus(tipo, cert);
+  const status = `<span class="badge ${st0.cls}">${st0.label}</span>`;
+  const respId = tipo.categoria==='institucional' ? state.notifInstitucionalMembroId : state.notifCertidaoMembroId;
+  const resp = respId ? membroById(respId) : null;
+  const iniTxt = cert.proximoVencimento && tipo.regraNotif==='4meses' ? ` — alerta a partir de ${fmtDate(inicioAlerta(tipo, cert.proximoVencimento))}` : '';
 
   const overlay = makeModal(escapeHtml(tipo.nome), `
     <div class="hint" style="margin:-8px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -1986,6 +2051,14 @@ function openCertModal(instId, tipoId){
       ${inst.cnpj?`<button type="button" class="icon-btn mono small" id="c_cnpj" title="Copiar CNPJ">📋 ${escapeHtml(inst.cnpj)}</button>`:''}
       ${status}
     </div>
+    <div class="hint" style="margin:-6px 0 0;">
+      ${tipo.categoria==='institucional'?'🏛 Documento institucional':'📄 Certidão convencional'} · ${escapeHtml(regraLabel(tipo.regraNotif))}${iniTxt}
+      ${tipo.regraNotif!=='nenhuma' ? ` · aviso para: <b>${resp?escapeHtml(resp.nome):'ninguém definido (Configurações)'}</b>` : ''}
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:8px 10px;border:1px dashed var(--line);border-radius:8px;background:var(--white);cursor:pointer;">
+      <input type="checkbox" id="c_na" ${cert.naoAplica?'checked':''} style="width:auto;">
+      <span><b>Não se aplica a esta instituição</b><br><span class="muted small">Não gera aviso, não conta como vencido nem pendente e fica fora dos indicadores. As datas registradas são mantidas.</span></span>
+    </label>
 
     <div class="modal-sub">1. Emitir</div>
     ${site
@@ -2039,6 +2112,7 @@ function openCertModal(instId, tipoId){
     cert.proximoVencimento = prox;
     cert.link = link;
     cert.siteEmissao = siteEsp;
+    cert.naoAplica = q('#c_na').checked;
     if(isNew) state.certidoes.push(cert);
     scheduleSave(); overlay.remove(); render(); toast('Certidão atualizada.');
   };
@@ -2335,17 +2409,19 @@ function renderConfig(c){
 
   // Tipos de certidão
   const s1 = document.createElement('div'); s1.className='cfg-section';
-  s1.innerHTML = `<h3>Tipos de certidão</h3><div class="hint">A lista de certidões acompanhadas em todas as instituições. Os tipos ficam só aqui — não aparecem como projetos. <b>Site de emissão</b>: o endereço que abre no botão "🌐 emitir" (cada instituição pode ter um site próprio, definido na própria certidão; a municipal usa a cidade da instituição quando é Curitiba, Colombo ou São José dos Pinhais). Marque "só no dia" para a certidão que não precisa do aviso de 7 dias antes.</div>`;
+  s1.innerHTML = `<h3>Tipos de certidão e documentos</h3><div class="hint">A lista de certidões acompanhadas em todas as instituições. Os tipos ficam só aqui — não aparecem como projetos. <b>Site de emissão</b>: o endereço que abre no botão "🌐 emitir" (cada instituição pode ter um site próprio, definido na própria certidão; a municipal usa a cidade da instituição quando é Curitiba, Colombo ou São José dos Pinhais). <br><b>Categoria</b> define quem recebe o aviso (veja "Responsáveis pelos avisos" abaixo). <b>Regra de notificação</b>: no dia do vencimento, 4 meses antes (o alerta começa no 1º dia do mês, 4 meses antes do vencimento) ou sem aviso.</div>`;
   const l1 = document.createElement('div'); l1.className='cfg-list';
   state.certidaoTipos.forEach(tipo=>{
     const row = document.createElement('div'); row.className='cfg-row';
     row.style.flexWrap = 'wrap';
     row.innerHTML = `<input value="${escapeAttr(tipo.nome)}" class="tNome" style="flex:1 1 200px;">
       <input value="${escapeAttr(tipo.siteEmissao||'')}" class="tSite" placeholder="🌐 Site de emissão (https://...)" style="flex:2 1 260px;font-size:12.5px;color:var(--teal);">
-      <label class="small muted" style="display:flex;align-items:center;gap:5px;white-space:nowrap;" title="Aviso de WhatsApp só no dia do vencimento (sem o aviso de 7 dias antes)"><input type="checkbox" class="tDia" ${tipo.notificarApenasNoDia?'checked':''} style="flex:none;width:auto;"> só no dia</label>
+      <select class="tCat" title="Categoria" style="flex:1 1 170px;padding:6px 8px;border:1px solid var(--line-soft);border-radius:6px;background:var(--white);font-size:12.5px;">${CATEGORIAS_DOC.map(([v,l])=>`<option value="${v}" ${tipo.categoria===v?'selected':''}>${l}</option>`).join('')}</select>
+      <select class="tRegra" title="Regra de notificação de vencimento" style="flex:1 1 230px;padding:6px 8px;border:1px solid var(--line-soft);border-radius:6px;background:var(--white);font-size:12.5px;">${REGRAS_NOTIF.map(([v,l])=>`<option value="${v}" ${tipo.regraNotif===v?'selected':''}>${l}</option>`).join('')}</select>
       <button class="icon-btn del" title="Remover">✕</button>`;
     row.querySelector('.tNome').oninput = e=>{ tipo.nome = e.target.value; scheduleSave(); };
-    row.querySelector('.tDia').onchange = e=>{ tipo.notificarApenasNoDia = e.target.checked; scheduleSave(); };
+    row.querySelector('.tCat').onchange = e=>{ tipo.categoria = e.target.value; scheduleSave(); render(); };
+    row.querySelector('.tRegra').onchange = e=>{ tipo.regraNotif = e.target.value; scheduleSave(); render(); };
     row.querySelector('.tSite').onchange = e=>{
       const v = e.target.value.trim();
       if(v && !isUrl(v)){ toast('O site precisa começar com http:// ou https://'); e.target.value = tipo.siteEmissao||''; return; }
@@ -2362,7 +2438,8 @@ function renderConfig(c){
   s1.appendChild(l1);
   const add1 = document.createElement('button');
   add1.className='btn ghost small'; add1.style.marginTop='10px'; add1.textContent='+ Adicionar tipo de certidão';
-  add1.onclick = ()=>{ state.certidaoTipos.push({id:uid(), nome:'Nova certidão', notificarApenasNoDia:false, siteEmissao:''}); scheduleSave(); render(); };
+  add1.textContent='+ Adicionar tipo de certidão / documento';
+  add1.onclick = ()=>openNovoTipoDocModal();
   s1.appendChild(add1);
   wrap.appendChild(s1);
 
@@ -2396,12 +2473,18 @@ function renderConfig(c){
 
   // Notificações
   const s4 = document.createElement('div'); s4.className='cfg-section';
-  s4.innerHTML = `<h3>Avisos de certidões</h3><div class="hint">Quem recebe por WhatsApp o aviso diário de certidões que vencem em 7 dias e no dia do vencimento (precisa ter WhatsApp e chave preenchidos acima).</div>`;
-  const sel = document.createElement('select');
-  sel.style.cssText = 'max-width:280px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--white);';
-  sel.innerHTML = `<option value="">— Ninguém selecionado —</option>` + state.membros.map(m=>`<option value="${m.id}" ${state.notifCertidaoMembroId===m.id?'selected':''}>${escapeHtml(m.nome)}</option>`).join('');
-  sel.onchange = e=>{ state.notifCertidaoMembroId = e.target.value || null; scheduleSave(); };
-  s4.appendChild(sel);
+  s4.innerHTML = `<h3>Responsáveis pelos avisos</h3><div class="hint">Quem recebe por WhatsApp os avisos de vencimento de cada categoria, conforme a regra de cada tipo (precisa ter WhatsApp e chave preenchidos acima). Podem ser pessoas diferentes.</div>`;
+  const mkSel = (label, key)=>{
+    const w = document.createElement('div'); w.className = 'field'; w.style.marginBottom = '10px';
+    w.innerHTML = `<label>${label}</label>`;
+    const sel = document.createElement('select');
+    sel.style.cssText = 'max-width:320px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--white);';
+    sel.innerHTML = `<option value="">— Ninguém selecionado —</option>` + state.membros.map(m=>`<option value="${m.id}" ${state[key]===m.id?'selected':''}>${escapeHtml(m.nome)}</option>`).join('');
+    sel.onchange = e=>{ state[key] = e.target.value || null; scheduleSave(); };
+    w.appendChild(sel); s4.appendChild(w);
+  };
+  mkSel('📄 Responsável pelas certidões convencionais', 'notifCertidaoMembroId');
+  mkSel('🏛 Responsável pelos documentos institucionais (CMAS, CMDCA, COMTIBA, Ata de Eleição…)', 'notifInstitucionalMembroId');
   wrap.appendChild(s4);
 
   c.appendChild(wrap);

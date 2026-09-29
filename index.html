@@ -754,7 +754,7 @@ function openCertListModal(kind){
       <table class="tbl"><thead><tr><th>Instituição</th><th>Documento</th><th>Regra</th><th>Vencimento</th><th>${kind==='vencidas'?'Dias em atraso':'Dias restantes'}</th></tr></thead>
       <tbody>${items.map(it=>`
         <tr class="click" data-inst="${it.inst.id}" data-tipo="${it.tipo.id}">
-          <td>${escapeHtml(instLabel(it.inst))}</td><td>${escapeHtml(it.tipo.nome)}</td><td class="small muted">${it.tipo.regraNotif==='4meses'?'4 meses':it.tipo.regraNotif==='nenhuma'?'sem aviso':'no dia'}</td>
+          <td>${escapeHtml(instLabel(it.inst))}</td><td>${escapeHtml(it.tipo.nome)}</td><td class="small muted">${it.tipo.regraNotif==='4meses'?'4 meses':it.tipo.regraNotif==='nenhuma'?'sem aviso':it.tipo.regraNotif==='diaSeguinte'?'1 dia após':'no dia'}</td>
           <td class="mono">${fmtDate(it.cert.proximoVencimento)}</td>
           <td class="mono" style="color:${kind==='vencidas'?'var(--bad)':'var(--warn)'};">${Math.abs(it.dias)}</td>
         </tr>`).join('')}</tbody></table>
@@ -1873,6 +1873,7 @@ function openInstModal(instId){
 // ---- Regras de vencimento ----
 const REGRAS_NOTIF = [
   ['dia',     'Notificar somente no dia do vencimento'],
+  ['diaSeguinte', 'Notificar 1 dia após o vencimento'],
   ['4meses',  'Notificar com 4 meses de antecedência'],
   ['nenhuma', 'Não gerar notificação de vencimento']
 ];
@@ -1894,6 +1895,7 @@ function certStatus(tipo, cert){
   if(cert && cert.naoAplica) return {k:'na', label:'não se aplica', cls:'na'};
   const du = cert ? daysUntil(cert.proximoVencimento) : null;
   if(du===null) return {k:'semdata', label:'sem data', cls:'none'};
+  if(du===-1 && tipo.regraNotif==='diaSeguinte') return {k:'vencida', dias:du, label:'renovar hoje', cls:'bad'}; // só pode ser renovada no dia seguinte
   if(du<0) return {k:'vencida', dias:du, label:`vencida há ${Math.abs(du)}d`, cls:'bad'};
   const ini = inicioAlerta(tipo, cert.proximoVencimento);
   if(ini && todayStr() >= ini) return {k:'alerta', dias:du, label: du===0 ? 'vence hoje' : `vence em ${du}d`, cls:'warn', desde:ini};
@@ -1986,7 +1988,7 @@ function renderCertidoes(c){
       cell.className='cert-cell' + (st.k==='na' ? ' na' : '');
       cell.innerHTML = `
         <div class="cn">${escapeHtml(tipo.nome)}</div>
-        ${tipo.regraNotif==='4meses' ? '<div class="regra-tag">⏰ aviso 4 meses antes</div>' : tipo.regraNotif==='nenhuma' ? '<div class="regra-tag">🔕 sem aviso</div>' : ''}
+        ${tipo.regraNotif==='4meses' ? '<div class="regra-tag">⏰ aviso 4 meses antes</div>' : tipo.regraNotif==='diaSeguinte' ? '<div class="regra-tag">⏭ aviso 1 dia após o vencimento</div>' : tipo.regraNotif==='nenhuma' ? '<div class="regra-tag">🔕 sem aviso</div>' : ''}
         <div class="cd"><span>Últ. renovação</span><span>${cert?fmtDate(cert.ultimaRenovacao):'—'}</span></div>
         <div class="cd"><span>Próx. vencimento</span><span>${cert?fmtDate(cert.proximoVencimento):'—'}</span></div>
         <div class="foot"><span class="badge ${bc}">${bt}</span>
@@ -2409,7 +2411,7 @@ function renderConfig(c){
 
   // Tipos de certidão
   const s1 = document.createElement('div'); s1.className='cfg-section';
-  s1.innerHTML = `<h3>Tipos de certidão e documentos</h3><div class="hint">A lista de certidões acompanhadas em todas as instituições. Os tipos ficam só aqui — não aparecem como projetos. <b>Site de emissão</b>: o endereço que abre no botão "🌐 emitir" (cada instituição pode ter um site próprio, definido na própria certidão; a municipal usa a cidade da instituição quando é Curitiba, Colombo ou São José dos Pinhais). <br><b>Categoria</b> define quem recebe o aviso (veja "Responsáveis pelos avisos" abaixo). <b>Regra de notificação</b>: no dia do vencimento, 4 meses antes (o alerta começa no 1º dia do mês, 4 meses antes do vencimento) ou sem aviso.</div>`;
+  s1.innerHTML = `<h3>Tipos de certidão e documentos</h3><div class="hint">A lista de certidões acompanhadas em todas as instituições. Os tipos ficam só aqui — não aparecem como projetos. <b>Site de emissão</b>: o endereço que abre no botão "🌐 emitir" (cada instituição pode ter um site próprio, definido na própria certidão; a municipal usa a cidade da instituição quando é Curitiba, Colombo ou São José dos Pinhais). <br><b>Categoria</b> define quem recebe o aviso (veja "Responsáveis pelos avisos" abaixo). <b>Regra de notificação</b>: no dia do vencimento, 1 dia após o vencimento (para certidões que só podem ser renovadas no dia seguinte), 4 meses antes (o alerta começa no 1º dia do mês, 4 meses antes do vencimento) ou sem aviso.</div>`;
   const l1 = document.createElement('div'); l1.className='cfg-list';
   state.certidaoTipos.forEach(tipo=>{
     const row = document.createElement('div'); row.className='cfg-row';

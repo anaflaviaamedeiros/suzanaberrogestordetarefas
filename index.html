@@ -452,7 +452,7 @@ function normalizePessoa(o, keys, legadoEnd){
 }
 const REP_KEYS = ['nome','cpf','rg','profissao','email','telefone'];
 const CONT_KEYS = ['nome','cpf','rg','profissao','crcUf','crcNumero','email','telefone'];
-function normalizeInst(i, idx){
+function normalizeInst(i, idx, extrasStatus){
   i.nome = i.nome || 'Instituição';
   if(!i.cor) i.cor = PALETTE[idx % PALETTE.length];
   ['sigla','cnpj','email','endereco','telefone','dataInscricao'].forEach(k=>{ if(typeof i[k] !== 'string') i[k] = ''; });
@@ -462,12 +462,12 @@ function normalizeInst(i, idx){
   i.contador = normalizePessoa(i.contador, CONT_KEYS);
   if(typeof i.excluirIndicadores === 'undefined') i.excluirIndicadores = false;
   if(!Array.isArray(i.projetos)) i.projetos = [];
-  i.projetos.forEach(normalizeProj);
+  i.projetos.forEach(p=>normalizeProj(p, extrasStatus));
 }
-function normalizeProj(p){
+function normalizeProj(p, extras){
   p.nome = p.nome || 'Projeto';
   ['codigo','origem','inicio','fim','obs'].forEach(k=>{ if(typeof p[k] !== 'string') p[k] = ''; });
-  if(!PROJ_STATUS.some(s=>s.id===p.status)) p.status = 'proposta';
+  if(!allProjStatus(extras).some(s=>s.id===p.status)) p.status = 'proposta';
   if(typeof p.statusDesde !== 'string') p.statusDesde = '';
   if(!Array.isArray(p.historico)) p.historico = [];
   if(!Array.isArray(p.alteracaoTipos)) p.alteracaoTipos = [];
@@ -483,7 +483,12 @@ function normalizeState(saved){
     m.whatsapp = m.whatsapp || ''; m.callmebotApiKey = m.callmebotApiKey || '';
     if(!m.cor || !USER_PALETTE.includes(m.cor)) m.cor = USER_PALETTE[idx % USER_PALETTE.length];
   });
-  s.instituicoes.forEach(normalizeInst);
+  // Status de projeto cadastrados pela equipe (botão + na janela do projeto)
+  if(!Array.isArray(s.statusProjetoExtras)) s.statusProjetoExtras = [];
+  s.statusProjetoExtras = s.statusProjetoExtras.filter(e=>e && e.id && e.label).map(e=>({
+    id:String(e.id), label:String(e.label), curto:String(e.curto||e.label), cls: e.acomp ? 'warn' : 'info', acomp: !!e.acomp
+  }));
+  s.instituicoes.forEach((i,idx)=>normalizeInst(i, idx, s.statusProjetoExtras));
   s.certidoes.forEach(c=>{ if(typeof c.link !== 'string') c.link = ''; });
   s.certidaoTipos.forEach(ct=>{
     if(typeof ct.notificarApenasNoDia !== 'boolean') ct.notificarApenasNoDia = false;
@@ -560,7 +565,16 @@ function instById(id){ return state.instituicoes.find(i=>i.id===id); }
 function instLabel(i){ return i ? ((i.sigla||'').trim() || i.nome) : ''; }
 function projById(instId, projId){ const i=instById(instId); return i && i.projetos.find(p=>p.id===projId); }
 function membroById(id){ return state.membros.find(m=>m.id===id); }
-function statusById(id){ return PROJ_STATUS.find(s=>s.id===id) || PROJ_STATUS[0]; }
+// Todos os status disponíveis: os padrão + os cadastrados pela equipe (entram antes de "Finalizado").
+function allProjStatus(extras){
+  const ex = (extras || (state && state.statusProjetoExtras) || []).map(e=>({...e, extra:true}));
+  const fim = PROJ_STATUS.filter(s=>s.id==='finalizado');
+  return PROJ_STATUS.filter(s=>s.id!=='finalizado').concat(ex, fim);
+}
+function statusById(id){
+  const all = allProjStatus();
+  return all.find(s=>s.id===id) || {id, label:String(id||'—'), curto:String(id||'—'), cls:'none'};
+}
 function projLabel(p){ return p ? (p.nome + (p.codigo ? ` (${p.codigo})` : '')) : ''; }
 function projBadge(p){ const s = statusById(p.status); return `<span class="badge ${s.cls}">${escapeHtml(s.curto)}</span>`; }
 function currentMembro(){
@@ -1217,6 +1231,30 @@ function openQuickOptionModal(cfg){
   overlay.querySelector('#qt_save').onclick = save;
   inp.onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); } };
 }
+function openNovoStatusModal(onAdded){
+  const overlay = makeModal('Novo status de projeto', `
+    <div class="field"><label>Nome do status</label><input id="ns_nome" placeholder="Ex.: Aguardando repasse" maxlength="60"></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:7px;text-transform:none;font-size:13px;color:var(--ink);letter-spacing:0;">
+      <input type="checkbox" id="ns_acomp" style="width:auto;"> Exige acompanhamento de prazos</label>
+      <div class="hint" style="margin:4px 0 0;">Se marcado, os projetos nesse status entram em "Projetos em acompanhamento", no topo.</div></div>
+    <div class="modal-actions" style="justify-content:flex-end;"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="ns_save">Adicionar</button></div>`, 380);
+  overlay.style.zIndex = '300';
+  const inp = overlay.querySelector('#ns_nome');
+  inp.focus();
+  const save = ()=>{
+    const nome = inp.value.trim().replace(/\s+/g,' ');
+    if(!nome) return;
+    const existente = allProjStatus().find(s=>normalizeStr(s.label)===normalizeStr(nome) || normalizeStr(s.curto)===normalizeStr(nome));
+    if(existente){ overlay.remove(); onAdded(existente.id); toast(`"${existente.label}" já existe — selecionado.`); return; }
+    const acomp = overlay.querySelector('#ns_acomp').checked;
+    const novo = {id:'st_'+uid(), label:nome, curto:nome, cls: acomp?'warn':'info', acomp};
+    state.statusProjetoExtras.push(novo);
+    scheduleSave();
+    overlay.remove(); onAdded(novo.id); render(); toast('Status adicionado.');
+  };
+  overlay.querySelector('#ns_save').onclick = save;
+  inp.onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); } };
+}
 function openQuickTipoModal(onAdded){
   openQuickOptionModal({titulo:'Novo tipo de tarefa', label:'Nome do tipo', placeholder:'Ex.: Recibo',
     lista:()=>state.tiposTarefa, onAdded, okMsg:'Tipo adicionado.'});
@@ -1316,12 +1354,12 @@ function renderProjetos(c){
   chips.innerHTML = `
     <button class="chip ${!f.status?'active':''}" data-st="">Todos<span class="n">${base.filter(x=>f.finalizados||x.p.status!=='finalizado').length}</span></button>
     <button class="chip acomp ${f.status==='acomp'?'active':''}" data-st="acomp" title="Em tramitação ou em alteração de plano">⚑ Em acompanhamento<span class="n">${nAcomp}</span></button>
-    ${PROJ_STATUS.map(s=>`<button class="chip ${f.status===s.id?'active':''}" data-st="${s.id}">${escapeHtml(s.curto)}<span class="n">${base.filter(x=>x.p.status===s.id).length}</span></button>`).join('')}
+    ${allProjStatus().map(s=>`<button class="chip ${f.status===s.id?'active':''}" data-st="${s.id}">${escapeHtml(s.curto)}<span class="n">${base.filter(x=>x.p.status===s.id).length}</span></button>`).join('')}
   `;
   chips.querySelectorAll('.chip').forEach(b=>b.onclick = ()=>{ f.status = b.dataset.st; render(); });
   c.appendChild(chips);
 
-  const order = id=>PROJ_STATUS.findIndex(s=>s.id===id);
+  const order = id=>allProjStatus().findIndex(s=>s.id===id);
   const list = base.filter(({p})=>{
     if(f.status==='acomp') return statusById(p.status).acomp;
     if(f.status) return p.status===f.status;
@@ -1398,7 +1436,10 @@ function openProjModal(instId, projId){
     <div class="modal-sub">Situação do projeto</div>
     <div class="field-row">
       <div class="field"><label>Status</label>
-        <select id="p_status">${PROJ_STATUS.map(s=>`<option value="${s.id}" ${p.status===s.id?'selected':''}>${escapeHtml(s.label)}</option>`).join('')}</select></div>
+        <div style="display:flex;gap:6px;">
+          <select id="p_status" style="flex:1;min-width:0;"></select>
+          <button type="button" class="btn ghost small" id="p_status_add" title="Cadastrar novo status" style="flex:none;padding:0 12px;">+</button>
+        </div></div>
       <div class="field"><label>Nesse status desde</label><input id="p_desde" type="date" value="${p.statusDesde||todayStr()}"></div>
     </div>
     <div class="hint" id="p_status_hint" style="margin:-6px 0 0;"></div>
@@ -1466,6 +1507,11 @@ function openProjModal(instId, projId){
   overlay.querySelector('#p_origem_add').onclick = ()=>openQuickOrigemModal(nome=>fillOrigem(nome));
 
   const stSel = overlay.querySelector('#p_status'), desde = overlay.querySelector('#p_desde');
+  const fillStatus = sel=>{
+    stSel.innerHTML = allProjStatus().map(s=>`<option value="${s.id}" ${sel===s.id?'selected':''}>${escapeHtml(s.label)}</option>`).join('');
+  };
+  fillStatus(p.status);
+  overlay.querySelector('#p_status_add').onclick = ()=>openNovoStatusModal(id=>{ fillStatus(id); syncStatusUI(); });
   const altWrap = overlay.querySelector('#p_alt_wrap'), hint = overlay.querySelector('#p_status_hint');
   function syncStatusUI(){
     const s = stSel.value;
